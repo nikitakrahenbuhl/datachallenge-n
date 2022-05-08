@@ -1,7 +1,7 @@
 ---
-title: The title of your DataChallenge
+title: Data Challenge
 subtitle: A subtle subtitle
-author: Firstname1 Lastname1 and Firstname2 Lastname2
+author: Nikita Krähenbühl 
 output: html_document
 
 ---
@@ -44,17 +44,6 @@ library(ggplot2)
 <!-- the following is just a placeholder text, remove it!-->
 Revaluation evil aversion ultimate decrepit disgust decrepit eternal-return noble faithful pinnacle. Truth ascetic inexpedient decrepit free. Ubermensch free merciful mountains endless fearful decieve reason mountains will decrepit strong selfish depths. Overcome faith snare gains oneself transvaluation.
 
-```{r}
-# include plots automatically
-
-ggplot(mtcars, aes(mpg, cyl)) +
-  geom_point()
-
-```
-
-
-
-
 
 ## Material and Methods
 
@@ -70,4 +59,172 @@ Philosophy oneself passion play fearful self noble zarathustra deceptions sexual
 
 <!-- the following is just a placeholder text, remove it!-->
 Justice convictions spirit sexuality insofar free marvelous joy. Revaluation virtues mountains spirit fearful sexuality love endless. Society intentions will noble burying aversion moral. Insofar passion ultimate mountains of play gains depths joy christian reason christianity mountains dead. Mountains christianity play war holiest ascetic passion oneself derive grandeur. Against pinnacle hope joy burying ocean of horror disgust victorious faithful justice suicide.
+
+# Packages
+```{r}
+library(tidyverse)
+library(sf)
+library(tmap)
+library(lubridate)
+
+```
+
+# Data Exploration
+```{r}
+
+deer <- read_csv("data/all_deer_cleaned.csv")
+
+deer %>% 
+  st_as_sf(., coords = c("longitude", "latitude"), crs = 4326) %>% 
+  st_transform(., crs = 2056) -> deer_sf
+
+deer_sf
+```
+So we have 10 deer that have been tracked.
+
+# Data exploration
+```{r}
+deer %>% 
+  group_by(reh) %>% 
+  summarise(n = n())
+
+summary(deer)
+str(deer)
+
+ggplot(deer_sf) + geom_sf()
+
+tm_shape(deer_sf) + tm_dots(col = "reh")
+``` 
+
+## Areal Extent
+Does each deer have an area/revier and is there an overlap?
+```{r}
+deer_sf %>% 
+  group_by(reh) %>% 
+  summarise(.) %>% 
+  st_convex_hull(.) -> mcp
+
+ggplot(mcp) + geom_sf(aes(fill = reh), alpha = 0.4)
+```
+## Analysing trajectory data
+Lets get time data etc
+```{r}
+deer %>% 
+  group_by(reh) %>% 
+  mutate(timelag = as.integer(difftime(lead(datetime_utc),datetime_utc), units = "secs")) -> deer
+
+ggplot(deer, aes(x= latitude, y = longitude, color = reh)) + 
+  geom_path() + 
+  geom_point() +
+  coord_equal()
+```
+Time plots
+```{r}
+ggplot(deer, aes(x = datetime_utc, y = reh)) +
+  geom_line() #not all tracked for the same period
+
+ggplot(deer, aes(x = timelag)) +
+  geom_bar() + scale_y_log10() + scale_x_log10() #2 groupings of timelag
+
+deer %>% 
+  filter(timelag < 2000) %>% 
+  ggplot(., aes(x = timelag)) +
+    geom_bar() + scale_y_log10() #solid amount under 500 seconds
+
+ggplot(deer, aes(x=reh, y = timelag)) + geom_boxplot() #Reh 14 is an outlier?
+
+
+deer %>% 
+  filter(reh != "RE14") %>% 
+  ggplot(., aes(x=reh, y = timelag)) + geom_boxplot() 
+
+deer %>% 
+  filter(reh != "RE14") %>% 
+  summary(.)
+
+```
+It is clear that our average timelag is around 3 minutes - with some lower points dragging the mean down.
+
+## Calculating speed
+```{r}
+speed_calculator <- function(df_input, interval){
+  df_input %>% 
+    mutate(timelag = as.numeric(difftime(lead(datetime_utc),datetime_utc), units = "secs"), 
+           steplength = sqrt((latitude - lead(latitude,1))^2 + (longitude - lead(longitude,1))^2),
+         speed = steplength/timelag,
+         interval = interval) -> df_output
+  
+  return(df_output)
+} 
+
+speed_calculator(deer, "1 minute") %>% 
+  ggplot(., aes(x=reh, y = speed)) + geom_boxplot()
+
+
+```
+
+Now lets perform the trajectory analysis.
+
+1 sample is 3 minutes so if we take a window of 18 minutes we use a window size of 6 positions
+```{r}
+deer %>% 
+  mutate(
+    nMinus3 = sqrt((lag(latitude, 3)-latitude)^2 + (lag(longitude, 3)-longitude)^2),
+    nMinus2 = sqrt((lag(latitude, 2)-latitude)^2+(lag(longitude, 2)-longitude)^2),  
+    nMinus1 = sqrt((lag(latitude, 1)-latitude)^2+(lag(longitude, 1)-longitude)^2),
+    nPlus1  = sqrt((latitude-lead(latitude, 1))^2+(longitude-lead(longitude, 1))^2), 
+    nPlus2  = sqrt((latitude-lead(latitude, 2))^2+(longitude-lead(longitude, 2))^2),  
+    nPlus3  = sqrt((latitude-lead(latitude, 3))^2+(longitude-lead(longitude, 3))^2)  
+) %>% 
+  rowwise(.) %>% 
+  mutate(
+    stepMean = mean(c(nMinus3, nMinus2, nMinus1, nPlus1, nPlus2, nPlus3))
+  ) %>% 
+  ungroup() %>% 
+  mutate(static = stepMean < mean(stepMean, na.rm = TRUE)) -> deer
+```
+
+```{r}
+ggplot(deer) +
+  geom_boxplot(aes(y = stepMean), outlier.shape = NA) 
+
+ggplot(deer) +
+  geom_histogram(aes(stepMean), bins = 60) + geom_vline(xintercept = 4, color = "red")
+
+summary(deer$stepMean)
+
+ggplot(deer) +
+  geom_line(aes(x=datetime_utc, y=stepMean)) 
+```
+
+
+```{r}
+deer %>% 
+  ggplot(data = ., aes(x = latitude, y = longitude)) +
+    geom_path() +
+    geom_point(aes(color = static)) +
+    coord_fixed() + labs(title = "All static points removed")
+```
+
+
+```{r}
+rle_id <- function(vec){
+  x <- rle(vec)$lengths
+  as.factor(rep(seq_along(x), times=x))
+}
+
+
+deer %>%
+  filter(reh == "RE01") %>% 
+  mutate(segment_id = rle_id(static),
+         duration = as.integer(difftime(max(datetime_utc),min(datetime_utc), units = "mins"))) %>% 
+  filter(duration > 5) %>% 
+  ggplot(., aes(latitude, longitude, color = segment_id)) +
+  geom_path() +
+  geom_point() +
+  coord_equal() + labs(title="All moving segments") +
+  theme(legend.position = "none")
+
+
+```
 
