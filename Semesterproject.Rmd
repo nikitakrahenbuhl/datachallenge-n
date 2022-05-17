@@ -93,6 +93,7 @@ str(deer)
 
 ggplot(deer_sf) + geom_sf()
 
+tmap_mode("view")
 tm_shape(deer_sf) + tm_dots(col = "reh")
 ``` 
 
