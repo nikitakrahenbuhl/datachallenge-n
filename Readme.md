@@ -7,8 +7,7 @@ Analysis Geo 880**
 |----------------|---------------------------------- |
 | **Data:**      | Roe Deer Movement Data            |
 | **Title:**     | The title of your project         |
-| **Student 1:** | Name of Student 1                 |
-| **Student 2:** | Name of Student 2                 |
+| **Student 1:** | Nikita Krähenbühl                |
 
 ## Abstract 
 <!-- (50-60 words) -->
