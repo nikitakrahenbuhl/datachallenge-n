@@ -6,7 +6,7 @@ Analysis Geo 880**
 | Semester:      | FS22                              |
 |----------------|---------------------------------- |
 | **Data:**      | Roe Deer Movement Data            |
-| **Title:**     | The title of your project         |
+| **Title:**     | Examining the impact of recreational outdoor activity on deer movement         |
 | **Student 1:** | Nikita Krähenbühl                |
 
 ## Abstract 
