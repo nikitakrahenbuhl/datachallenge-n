@@ -30,7 +30,7 @@ In addition to being the main habitat of European roe deer (Capreolus capreolus)
 The following hypotheses are therefore being tested:
 
 | Null hypothesis                                          | Alternate hypothesis                                  |
-|----------------------------------------------------------|-------------------------------------------------------|
+|-------------------------------------|-----------------------------------|
 | Deer movement does not vary between weekdays and weekend | Deer movement on average increases during the weekend |
 |                                                          |                                                       |
 |                                                          |                                                       |
@@ -223,7 +223,8 @@ Would be really interesting to calculate steplength or speed within a day and th
 deer %>% 
   group_by(wdays) %>% 
   summarise(avg_steplength = mean(steplength, na.rm = TRUE)) %>% 
-  ggplot(.) + geom_point(aes(x=wdays, y = avg_steplength))
+  ggplot(., aes(x=wdays, y = avg_steplength)) + geom_bar(stat="identity", width=.5, fill = "tomato3") 
+  #geom_point(aes(x=wdays, y = avg_steplength))
 
 deer %>% 
   mutate(hour = hour(round_date(datetime_utc, "hour"))) %>% 
@@ -273,7 +274,6 @@ library(sp)
 p = Polygon(xym)
 ps = Polygons(list(p),1)
 sps = SpatialPolygons(list(ps))
-plot(sps)
 
 strassen <- read_sf("data/swisstlm3d_2022-03_2056_5728/TLM_STRASSEN/swissTLM3D_TLM_STRASSE.shp") %>% st_crop(., sps)
 boden <- read_sf("data/swisstlm3d_2022-03_2056_5728/TLM_BB/swissTLM3D_TLM_BODENBEDECKUNG_OST.shp") %>% st_crop(., sps)
@@ -324,7 +324,7 @@ ggplot() +
   geom_sf(data = strassen %>% filter(!is.na(WANDERWEGE)), color = "red")
 
 
-tmap_mode("plot")
+tmap_mode("view")
 tm_shape(strassen) + tm_lines("OBJEKTART") + tm_raster(strava, palette = "viridis")
 
 
@@ -430,22 +430,21 @@ deer %>%
 ```
 
 ```{r}
-ggplot(deer) +
+ggplot(deer_short) +
   geom_boxplot(aes(y = stepMean), outlier.shape = NA) 
 
-ggplot(deer) +
+ggplot(deer_short) +
   geom_histogram(aes(stepMean), bins = 60) + geom_vline(xintercept = 4, color = "red")
 
-summary(deer$stepMean)
+summary(deer_short$stepMean)
 
 ggplot(deer) +
   geom_line(aes(x=datetime_utc, y=stepMean)) 
 ```
 
 ```{r}
-deer %>% 
+deer_short %>% 
   ggplot(data = ., aes(x = x, y = y)) +
-    geom_path() +
     geom_point(aes(color = static)) +
     coord_fixed() + labs(title = "All static points removed")
 ```
@@ -455,15 +454,27 @@ rle_id <- function(vec){
   x <- rle(vec)$lengths
   as.factor(rep(seq_along(x), times=x))
 }
-
-deer %>%
+deer_short %>%
   filter(reh == "RE01") %>% 
   mutate(segment_id = rle_id(static),
          duration = as.integer(difftime(max(datetime_utc),min(datetime_utc), units = "mins"))) %>% 
   filter(duration > 5) %>% 
-  ggplot(., aes(latitude, longitude, color = segment_id)) +
+  ggplot(., aes(x, y, color = segment_id)) +
   geom_path() +
   geom_point() +
   coord_equal() + labs(title="All moving segments") +
   theme(legend.position = "none")
+
 ```
+
+```{r}
+tmap_mode("view")
+deer_short %>%
+  st_as_sf(., coords = c("x", "y"), crs = 2056) %>% 
+  filter(reh == "RE01") %>% 
+  mutate(segment_id = rle_id(static),
+         duration = as.integer(difftime(max(datetime_utc),min(datetime_utc), units = "mins"))) %>% 
+  filter(duration > 5) %>% 
+  tm_shape(.) + tm_dots("segment_id") 
+```
+
