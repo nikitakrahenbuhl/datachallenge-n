@@ -1,11 +1,13 @@
 ---
-title: Data Challenge
-subtitle: A subtle subtitle
+title: How are deer affected by recreational activities
+subtitle: Computational Movement Analysis
 author: Nikita Krähenbühl
 output: html_document
 ---
 
 ```{r include=FALSE}
+rm(list=ls())
+
 library(tidyverse)
 library(sf)
 library(tmap)
@@ -21,6 +23,24 @@ theme_set(theme_classic())
 options(warning=FALSE)    # Don't show warnings
 ```
 
+# To does
+Monday
+-   Filter deer data
+
+    -   1-2 deers
+
+    -   Summer and Winter of one year
+
+    -   Differing sample rate
+
+        -   3 hour for weekend vs weekday comparison
+
+        -   5 minute for daily rhythms
+
+        -   for avoidance of routes/crossing use the 5 minute limit
+- To do on Tuesday 
+- decide what method to use for crossing
+
 ## Abstract
 
 ## Introduction
@@ -29,13 +49,13 @@ In addition to being the main habitat of European roe deer (Capreolus capreolus)
 
 The following hypotheses are therefore being tested:
 
-| Null hypothesis                                          | Alternate hypothesis                                  |
-|-------------------------------------|-----------------------------------|
-| Deer movement does not vary between weekdays and weekend | Deer movement on average increases during the weekend |
-|                                                          |                                                       |
-|                                                          |                                                       |
-|                                                          |                                                       |
-|                                                          |                                                       |
+| Null hypothesis                                           | Alternate hypothesis                                  |
+|-----------------------------------------------------------|-------------------------------------------------------|
+| Deer movement does not vary between weekdays and weekend  | Deer movement on average increases during the weekend |
+| Dear movement is not constrained by recreational activity | Deer movement is constrained by activity              |
+|                                                           |                                                       |
+|                                                           |                                                       |
+|                                                           |                                                       |
 
 : Hypotheses
 
@@ -76,140 +96,194 @@ The characteristics of the data limit the computational movement analysis method
 |      |      |      |      |
 |      |      |      |      |
 
-Activity data from Strava was gathered by analysing the publicly available global heatmap (link) using a script provided by Nils Ratnaweera. Colour values from the raster data are used to indicate the number of activities was converted into XX. This provides a relative indication of how often a route is frequented. Whilst all activity types (cycling, running etc.) were gathered, the dataset does not allow for differentiation between activities and contains no temporal data.
+Activity data from Strava was gathered by analysing the publicly available [global heatmap](https://www.strava.com/heatmap) using a script provided by Nils Ratnaweera. Colour values from the raster data are used to indicate the number of activities was converted into . This provides a relative indication of how often a route is frequented. Whilst all activity types (cycling, running etc.) were gathered, the dataset does not allow for differentiation between activities and contains no temporal data.
 
-Street and hiking path data was sourced from swisstopo
+Street and hiking path data was sourced from swisstopo.
 
 ### Preprocessing
 
 ```{r}
-## Reading geometry, setting LV95 as coordinates
-deer %>% 
-  st_as_sf(., coords = c("longitude", "latitude"), crs = 4326) %>% 
-  st_transform(., crs = 2056) %>% 
-  mutate(x = unlist(map(.$geometry,1)),
-       y = unlist(map(.$geometry,2))) %>% 
-  mutate(wdays = lubridate::wday(datetime_utc, label = TRUE), week_start = getOption("lubridate.week.start", -1)) -> deer_sf
-
-deer_sf %>% st_set_geometry(NULL) -> deer
+## Relevant functions
+rle_id <- function(vec){
+  x <- rle(vec)$lengths
+  as.factor(rep(seq_along(x), times=x))
+}
 
 ## lets assign some useful, basic movement parameters
-speed_calculator <- function(df_input, interval){
+speed_calculator <- function(df_input){
   df_input %>% 
     group_by(reh) %>% 
     mutate(timelag = as.integer(difftime(lead(datetime_utc), datetime_utc, units = "secs")), 
            steplength = sqrt((y - lead(y,1))^2 + (x - lead(x,1))^2),
            timelag_minutes = timelag/60,
          speed_ms = steplength/timelag,
-         speed_kph = speed_ms * 3.6,
-         interval = interval) -> df_output
+         speed_kph = speed_ms * 3.6) -> df_output
   
   return(df_output)
 } 
 
-speed_calculator(deer_sf, "1 minute") -> deer_sf
-speed_calculator(deer, "1 minute") -> deer
+## Static points¨
+step_calculator <- function(df_input){
+    mutate(
+      nMinus3 = sqrt((lag(y, 3)-y)^2 + (lag(x, 3)-x)^2),
+      nMinus2 = sqrt((lag(y, 2)-y)^2+(lag(x, 2)-x)^2),  
+      nMinus1 = sqrt((lag(y, 1)-y)^2+(lag(x, 1)-x)^2),
+      nPlus1  = sqrt((y-lead(y, 1))^2+(x-lead(x, 1))^2), 
+      nPlus2  = sqrt((y-lead(y, 2))^2+(x-lead(x, 2))^2),  
+      nPlus3  = sqrt((y-lead(y, 3))^2+(x-lead(x, 3))^2)) %>% 
+  rowwise(.) %>% 
+  mutate(
+    stepMean = mean(c(nMinus3, nMinus2, nMinus1, nPlus1, nPlus2, nPlus3))) %>% 
+  ungroup() %>% 
+  mutate(static = stepMean < mean(stepMean, na.rm = TRUE)) -> df_output
+  
+  return(df_output)
+  
+}
 ```
 
+#### Deer Data
+
 ```{r}
-## Initial spatial exploration
-ggplot(data = deer_sf, aes(x = datetime_utc, y = reh)) +
+## Reading geometry, setting LV95 as coordinates 
+## Getting weekdays, timelag, stepMean and Speed data
+deer %>% 
+  st_as_sf(., coords = c("longitude", "latitude"), crs = 4326) %>% 
+  st_transform(., crs = 2056) %>% 
+  mutate(x = unlist(map(.$geometry,1)),
+       y = unlist(map(.$geometry,2))) %>% 
+  mutate(wdays = lubridate::wday(datetime_utc, label = TRUE), 
+         week_start = getOption("lubridate.week.start", -1),
+         month = factor(format(datetime_utc,"%B"), levels = month.name), 
+         year = format(datetime_utc, "%Y")) %>% 
+  speed_calculator(.)-> deer
+```
+
+#### Context
+
+```{r}
+### Need to load the street/hiking data
+# First create a polygon with bounding boc
+x_coord <- c( 2679000, 2687981, 2687981, 2679000)
+y_coord <- c(1241000, 1241000, 1228484, 1228484)
+xym <- cbind(x_coord, y_coord)
+library(sp)
+p = Polygon(xym)
+ps = Polygons(list(p),1)
+sps = SpatialPolygons(list(ps))
+
+strassen <- read_sf("/Users/nikitakrahenbuhl/Documents/Masters/PandT/project/datachallenge-n/data/swiss_TLM_data.gpkg","strassen")
+boden <- read_sf("/Users/nikitakrahenbuhl/Documents/Masters/PandT/project/datachallenge-n/data/swiss_TLM_data.gpkg","bodenbedeckung")
+
+strassen %>% filter(grepl("Weg|Autobahn|3m Strasse", OBJEKTART))  -> strassen_freizeit
+strassen %>% filter(!is.na(WANDERWEGE)) -> wanderwege
+```
+
+#### Strava
+
+```{r}
+source("strava.R")
+#strava_get(zoom = 11)
+library(terra)
+strava <- rast("strava_all_11_hot/combined/05_cropped.tif") %>% crop(., sps)
+
+plot(strava)
+```
+
+
+
+### Exploratory analysis and filtering
+
+```{r}
+## Temporal overview
+ggplot(data = deer, aes(x = datetime_utc, y = reh)) +
   geom_line() 
 
+## Sampling schedule
 ggplot(deer) + geom_boxplot(aes(x=reh, y=timelag_minutes))
-ggplot(deer) + geom_histogram(aes(x=timelag_minutes), bins = 100)
+ggplot(deer) + geom_histogram(aes(x=timelag_minutes), bins = 200) 
 ggplot(deer) + geom_boxplot(aes(x=reh, y=steplength))
 ggplot(deer) + geom_histogram(aes(x=steplength), bins = 100)
 
 ggplot(deer, aes(x=datetime_utc, y = timelag_minutes, color = reh)) + geom_line() + facet_wrap(~reh)
 
-deer %>% filter(timelag_minutes < 3) -> deer_short_1
-deer %>% filter(between(timelag_minutes, 3, 6)) -> deer_short
-
-deer %>% filter(between(timelag_minutes, 3, 6)) %>% 
-  ggplot(data = ., aes(x = datetime_utc, y = reh)) +
-  geom_line() + geom_point()
-
-deer %>% filter(timelag_minutes < 150) %>% 
-  ggplot(data = ., aes(x = datetime_utc, y = reh)) +
-  geom_line() + geom_point() -> p1
-ggplotly(p1)
-
+## Initial spatial exploration
 deer %>% 
-  filter(between(as.Date(datetime_utc), 
-                 as.Date('2014-11-01'), 
-                 as.Date('2014-12-05'))) %>% 
-    group_by(reh) %>% 
-  summarise(avg = mean(timelag_minutes, na.rm = TRUE), median = median(timelag_minutes, na.rm = TRUE), n=n())
-
-
-deer %>% 
-  group_by(reh) %>% 
-  summarise(avg = mean(timelag_minutes, na.rm = TRUE), median = median(timelag_minutes, na.rm = TRUE), n=n())
-
-deer_sf %>% 
   group_by(reh) %>% 
   summarise(.) %>% 
   st_convex_hull(.) -> mcp
 
+tmap_mode("view") 
+tm_shape(mcp) + tm_polygons("reh", alpha = 0.4) +
+tm_shape(wanderwege) + tm_lines(col = "tomato3") 
 
-ggplot(mcp) + geom_sf(aes(fill = reh), alpha = 0.4) + geom_sf(data = deer_sf,(aes(color=reh))) -> mcp
-
-deer_sf %>% 
-  filter(reh=="RE02") %>% 
-  ggplot(data = .) + geom_sf(aes(color=datetime_utc)) ##clear spatial outlier
 ```
 
-There are clearly some outliers, both temporally and spatially. Also multiple sampling regimes have been used. The majority of the movement data was collected in intervals of 180 minutes. There are however periods where data was collected in 5 minute intervals.
+Multiple sampling regimes, in intervals of 180 and 5 minutes were used. This data was consequently split, with long sampling intervals used to examine variations within a week. The shorter sampling intervals were used to analyse daily variations in movement and interactions with recreational infrastructure. There are clearly some temporal outliers, which were removed by sampling +- 2 minutes of the identified sampling intervals. Spatial outliers were roughly removed by filtering the data to a steplength of less than 2500 meters.
 
-**how do we filter these appropriately???**
+Due to the large amount of deer groups and temporal timescale a subset of deer groups must be chosen that interact with recreational infrastructure, are independent and contain concurrently recorded GPS tracks.
 
-```{r}
-deer %>% filter(between(timelag_minutes, 178, 182)) %>% 
-  ggplot(., aes(x=x, y=y, color=reh)) + geom_path() + geom_point() +
-  coord_fixed()
-
-deer %>% filter(timelag_minutes < 200) %>% 
-  ggplot(., aes(x=x, y=y, color=reh)) + geom_path() + geom_point() +
-  coord_fixed()
-deer %>% filter(timelag_minutes < 3) %>% filter(reh == "RE14") %>% 
-  ggplot(., aes(x=x, y=y, color=speed_ms)) + geom_path() + geom_point() +
-  coord_fixed()
-
-#I would say this or the last one are the correct filters
-deer %>% filter(timelag_minutes < 200) %>%
-  filter(steplength < 2500) %>% 
-  ggplot(., aes(x=x, y=y, color=reh)) + geom_path() + geom_point() +
-  coord_fixed()
-
-deer %>% filter(between(timelag_minutes, 178, 182)) %>%
-  filter(steplength < 2500) %>% 
-  ggplot(., aes(x=x, y=y, color=reh)) + geom_path() + geom_point() +
-  coord_fixed()
-
-deer %>% filter(between(timelag_minutes, 3, 7)) -> deer_short
-deer %>% filter(between(timelag_minutes, 178, 182)) %>%  filter(steplength < 2500) -> deer
-```
-
-### Methods
-
-#### Movement overview
+was chosen for analysis, as they are fairly dispersed and interact with recreational infrastructure. The multi-annual sampling period was also reduced to 2014, as there was continuous and well-sampled data for the chosen deer groups.
 
 ```{r}
+## Are some deer on average more active (disturbed) than others
 deer %>% 
-  mutate(month = format(datetime_utc,"%B"), year = format(datetime_utc, "%Y")) %>% 
+  st_drop_geometry() %>% 
+  filter(between(timelag_minutes, 178, 182) & steplength < 2500 & year == 2014) %>% 
+  group_by(reh) %>% summarise(avg_steplength_long = mean(steplength)) -> df
+
+deer %>% 
+  st_drop_geometry() %>% 
+  filter(between(timelag_minutes,  3, 7) & steplength < 2500 & year == 2014) %>% 
+  group_by(reh) %>% summarise(avg_steplength_short = mean(steplength)) -> df1
+
+merge(df, df1) -> df2
+
+active_deer <- c("RE15", "RE08", "RE11", "RE06")
+#active_deer <- c("RE06")
+
+deer %>% 
+  filter(between(timelag_minutes, 178, 182) & 
+           steplength < 2500 & 
+           reh %in% active_deer &
+           year == 2014) -> deer_long
+
+deer_long %>% 
+  ggplot(., aes(x=x, y=y, color=reh)) + geom_path() + geom_point() +
+  coord_fixed()
+
+deer_long %>% 
+  st_drop_geometry(.) %>% 
+  mutate(month = format(datetime_utc,"%m"), year = format(datetime_utc, "%Y")) %>% 
   group_by(reh, year, month, wdays) %>% 
-  summarise(mean_steplength = mean(steplength), mean_speed = mean(speed_ms)) %>% 
-  ggplot() + geom_tile(aes(x=wdays, y = month, fill = mean_speed)) + facet_wrap(~year) 
+  summarise(mean_steplength = mean(steplength), mean_speed = mean(speed_ms), n=n()) %>% 
+  ggplot() + geom_tile(aes(x=wdays, y = month, fill = n)) + facet_grid(reh~year) 
+
+
+deer %>% 
+  mutate(year = format(datetime_utc, "%Y")) %>% 
+  filter(between(timelag_minutes, 3, 7) & 
+           steplength < 2500 &
+           reh %in% active_deer &
+           year == 2014) -> deer_short
 
 deer_short %>% 
-  mutate(month = format(datetime_utc,"%B"), year = format(datetime_utc, "%Y")) %>% 
+  ggplot(., aes(x=x, y=y, color=reh)) + geom_path() + geom_point() +
+  coord_fixed()
+
+deer_short %>% 
+  st_drop_geometry(.) %>%
+  mutate(month = format(datetime_utc,"%m"), year = format(datetime_utc, "%Y")) %>% 
   group_by(reh, year, month, wdays) %>% 
-  summarise(mean_steplength = mean(steplength), mean_speed = mean(speed_ms)) %>% 
-  ggplot() + geom_tile(aes(x=wdays, y = month, fill = mean_speed)) + facet_wrap(~year) 
+  summarise(mean_steplength = mean(steplength), mean_speed = mean(speed_ms), n=n()) %>% 
+  ggplot() + geom_tile(aes(x=wdays, y = month, fill = n)) + facet_grid(reh~year) 
 ```
 
-#### Movement on the weekend
+A subset of data was defined.
+
+
+
+### Comparing weekdays and weekends
 
 GPS Tracks for deer was
 
@@ -220,15 +294,24 @@ Now lets have a look at visual variant
 Would be really interesting to calculate steplength or speed within a day and then split it up by day of the week
 
 ```{r}
-deer %>% 
-  group_by(wdays) %>% 
+deer_long %>% 
+  st_drop_geometry() %>% 
+  group_by(reh, month, wdays) %>% 
   summarise(avg_steplength = mean(steplength, na.rm = TRUE)) %>% 
-  ggplot(., aes(x=wdays, y = avg_steplength)) + geom_bar(stat="identity", width=.5, fill = "tomato3") 
-  #geom_point(aes(x=wdays, y = avg_steplength))
+  ggplot(., aes(x=wdays, y = avg_steplength)) + geom_bar(stat="identity", position = position_dodge(),  width=.5) 
 
-deer %>% 
+deer_long %>% 
+  st_drop_geometry() %>% 
+  group_by(reh, month, wdays) %>% 
+  summarise(avg_steplength = mean(steplength, na.rm = TRUE)) %>% 
+  ggplot(., aes(x=wdays, y = avg_steplength)) + geom_bar(stat="identity", position = position_dodge(),  width=.5) + facet_wrap(~month)
+
+deer_long %>% 
+  st_drop_geometry() %>% 
   mutate(hour = hour(round_date(datetime_utc, "hour"))) %>% 
-  ggline(data = ., x = "hour", y = "steplength", add = "mean", color = "reh") + facet_wrap(~wdays)
+  group_by(reh, month, wdays, hour) %>% 
+  summarise(avg_steplength = mean(steplength, na.rm = TRUE)) %>% 
+  ggplot(., aes(x = hour, y = avg_steplength, color = reh)) + geom_line() + geom_point() + facet_grid(month~wdays)
 
 deer %>% 
   mutate(hour = hour(round_date(datetime_utc, "hour"))) %>% 
@@ -265,70 +348,69 @@ multcompLetters(unlist(p_vals))
 #### Examining whether movement is constrained by recreational infrastructure
 
 ```{r}
-### Need to load the street/hiking data
-# First create a polygon with bounding boc
-x_coord <- c( 2679000, 2687981, 2687981, 2679000)
-y_coord <- c(1241000, 1241000, 1228484, 1228484)
-xym <- cbind(x_coord, y_coord)
-library(sp)
-p = Polygon(xym)
-ps = Polygons(list(p),1)
-sps = SpatialPolygons(list(ps))
-
-strassen <- read_sf("data/swisstlm3d_2022-03_2056_5728/TLM_STRASSEN/swissTLM3D_TLM_STRASSE.shp") %>% st_crop(., sps)
-boden <- read_sf("data/swisstlm3d_2022-03_2056_5728/TLM_BB/swissTLM3D_TLM_BODENBEDECKUNG_OST.shp") %>% st_crop(., sps)
-
 
 pdf()
 ggplot() + 
   geom_sf(data = boden, aes(fill = OBJEKTART)) + scale_fill_brewer(palette="Dark2") +
   geom_sf(data = strassen %>% filter(!is.na(WANDERWEGE)), color = "red") +
-  geom_sf(data = deer_sf, aes(color=reh))
+  geom_sf(data = deer, aes(color=reh))
 dev.off()
-
-```
-
-Lets explore the street data a little closer
-
-```{r}
-strassen %>% filter(grepl("Weg|Autobahn|3m Strasse", OBJEKTART))  -> strassen_freizeit
-strassen %>% filter(!is.na(WANDERWEGE)) -> wanderwege
-
-ggplot() + 
-  geom_sf(data = deer_sf, aes(color = reh)) + 
-  geom_sf(data = wanderwege)
-
-
-
-
-ggplot(strassen) + geom_sf(aes(color = OBJEKTART)) +
-  geom_sf(data = strassen %>% filter(!is.na(WANDERWEGE)), color = "red")-> p2
-
-ggarrange(p1,p2, p3, common.legend = TRUE)
-
-ggplot() + geom_sf(data = strassen, color = "blue") +
-  geom_sf(data = strassen %>% filter(!is.na(WANDERWEGE)), color = "red")
 
 ```
 
 Now adding the strava data
 
 ```{r}
-source("strava.R")
-#strava_get(zoom = 11)
-library(terra)
-strava <- rast("strava_all_11_hot/combined/05_cropped.tif") %>% crop(., sps)
-
-ggplot() +
-  geom_raster(data = strava) +
-  geom_sf(data = strassen %>% filter(!is.na(WANDERWEGE)), color = "red")
+terra::extract(strava, vect(wanderwege), fun=mean) %>% 
+  cbind(wanderwege, .) %>% 
+  st_as_sf(.) %>% rename(popularity = X01_combined) -> wanderwege
 
 
-tmap_mode("view")
-tm_shape(strassen) + tm_lines("OBJEKTART") + tm_raster(strava, palette = "viridis")
+wanderwege %>% st_buffer(5) -> wanderwege5
+wanderwege %>% st_buffer(10) -> wanderwege10
+wanderwege %>% st_buffer(30) -> wanderwege30
+
+tmap_mode("view") 
+tm_shape(mcp) + tm_polygons("reh", alpha = 0.4) +
+tm_shape(wanderwege30) + tm_polygons(col = "popularity") 
+
+wanderwege %>% filter(popularity > 125) %>% 
+  ggplot(.) + geom_sf(aes(color = popularity))
 
 
+```
 
+Lets only examine RE06 for this initially. We could
+
+```{r}
+deer_short %>% 
+  filter(reh == "RE06") %>% mutate(month = ymd(datetime_utc)) %>% 
+  group_by(month) %>% 
+      mutate(
+      nMinus3 = sqrt((lag(y, 3)-y)^2 + (lag(x, 3)-x)^2),
+      nMinus2 = sqrt((lag(y, 2)-y)^2+(lag(x, 2)-x)^2),  
+      nMinus1 = sqrt((lag(y, 1)-y)^2+(lag(x, 1)-x)^2),
+      nPlus1  = sqrt((y-lead(y, 1))^2+(x-lead(x, 1))^2), 
+      nPlus2  = sqrt((y-lead(y, 2))^2+(x-lead(x, 2))^2),  
+      nPlus3  = sqrt((y-lead(y, 3))^2+(x-lead(x, 3))^2)) %>% 
+  rowwise(.) %>% 
+  mutate(
+    stepMean = mean(c(nMinus3, nMinus2, nMinus1, nPlus1, nPlus2, nPlus3))) %>% 
+  ungroup() %>% 
+  mutate(static = stepMean < mean(stepMean, na.rm = TRUE)) -> re06
+
+  ggplot(data = re06, aes(x = x, y = y)) +
+    geom_point(aes(color = static)) +
+    coord_fixed() + labs(title = "All static points removed")
+  
+  re06 %>%
+  mutate(segment_id = rle_id(static),
+         duration = as.integer(difftime(max(datetime_utc),min(datetime_utc), units = "mins"))) %>%   st_as_sf(., coords = c("x", "y"), crs = 2056) -> re06
+  
+tmap_mode("view") 
+tm_shape(re06) + tm_dots("month") +
+tm_shape(wanderwege30) + tm_polygons(col = "popularity")  #split view?
+  
 ```
 
 ## Results
@@ -386,32 +468,14 @@ It is clear that our average timelag is around 3 minutes - with some lower point
 
 ## Calculating speed
 
-```{r}
-speed_calculator <- function(df_input, interval){
-  df_input %>% 
-    mutate(timelag = as.numeric(difftime(lead(datetime_utc),datetime_utc), units = "secs"), 
-           steplength = sqrt((latitude - lead(latitude,1))^2 + (longitude - lead(longitude,1))^2),
-         speed = steplength/timelag,
-         interval = interval) -> df_output
-  
-  return(df_output)
-} 
-
-speed_calculator(deer, "1 minute") %>% 
-  ggplot(., aes(x=reh, y = speed)) + geom_boxplot()
-
-speed_calculator(deer, "1 minute") -> t 
-
-```
-
 Now lets perform the trajectory analysis.
 
 1 sample is taken every 3 hours. The question is do we really need to reduce the granularity
 
-3 minutes so if we take a window of 18 minutes we use a window size of 6 positions
+1 sample is taken ever 5 minutes so if we take a window of 30 minutes we use a window size of 6 positions
 
 ```{r}
-deer %>% 
+deer_short %>% 
   filter(steplength < 3000) %>% 
   mutate(
     nMinus3 = sqrt((lag(y, 3)-y)^2 + (lag(x, 3)-x)^2),
@@ -426,15 +490,14 @@ deer %>%
     stepMean = mean(c(nMinus3, nMinus2, nMinus1, nPlus1, nPlus2, nPlus3))
   ) %>% 
   ungroup() %>% 
-  mutate(static = stepMean < mean(stepMean, na.rm = TRUE)) -> deer
+  mutate(static = stepMean < mean(stepMean, na.rm = TRUE)) -> deer_short
 ```
 
-```{r}
-ggplot(deer_short) +
-  geom_boxplot(aes(y = stepMean), outlier.shape = NA) 
+```{r eval=FALSE, include=FALSE}
+ggplot(deer_short) + geom_boxplot(aes(y = stepMean), outlier.shape = NA) 
 
 ggplot(deer_short) +
-  geom_histogram(aes(stepMean), bins = 60) + geom_vline(xintercept = 4, color = "red")
+  geom_histogram(aes(x=stepMean), bins = 60) + geom_vline(xintercept = 4, color = "red")
 
 summary(deer_short$stepMean)
 
@@ -450,31 +513,13 @@ deer_short %>%
 ```
 
 ```{r}
-rle_id <- function(vec){
-  x <- rle(vec)$lengths
-  as.factor(rep(seq_along(x), times=x))
-}
-deer_short %>%
-  filter(reh == "RE01") %>% 
-  mutate(segment_id = rle_id(static),
-         duration = as.integer(difftime(max(datetime_utc),min(datetime_utc), units = "mins"))) %>% 
-  filter(duration > 5) %>% 
-  ggplot(., aes(x, y, color = segment_id)) +
-  geom_path() +
-  geom_point() +
-  coord_equal() + labs(title="All moving segments") +
-  theme(legend.position = "none")
-
-```
-
-```{r}
 tmap_mode("view")
+
 deer_short %>%
-  st_as_sf(., coords = c("x", "y"), crs = 2056) %>% 
-  filter(reh == "RE01") %>% 
   mutate(segment_id = rle_id(static),
          duration = as.integer(difftime(max(datetime_utc),min(datetime_utc), units = "mins"))) %>% 
   filter(duration > 5) %>% 
   tm_shape(.) + tm_dots("segment_id") 
 ```
 
+One idea: Create multiple buffers around hiking paths and see how much time is spent there.
