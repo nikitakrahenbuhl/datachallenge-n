@@ -1,5 +1,735 @@
 ---
-title: "index"
-format: html
-editor: visual
+title: "Is Deer Movement affected be Recreational Activity?"
+subtitle: "Submission for the MSc Module Computational Movement Analysis"
+author: "Nikita Krähenbühl"
+format: 
+  html:
+    toc: true    
+    toc-location: left
+    number-sections: true
+editor: source
+bibliography: references.bib
 ---
+
+```{r include=FALSE}
+rm(list=ls())
+library(tidyverse)
+library(sf)
+library(tmap)
+library(lubridate)
+library(ggplot2)
+library(ggmap)
+library(RColorBrewer)
+library(ggpubr)
+library(multcomp)
+library(terra)
+library(sp)
+library(viridis)
+library(MASS)
+library(rstatix)
+library(basemapR)
+
+theme_set(theme_pubr())
+
+
+knitr::opts_chunk$set(warning = FALSE, echo = FALSE, message = FALSE)
+```
+
+```{r, include = FALSE}
+## Relevant functions
+rle_id <- function(vec){
+  x <- rle(vec)$lengths
+  as.factor(rep(seq_along(x), times=x))
+}
+
+## lets assign some useful, basic movement parameters
+speed_calculator <- function(df_input){
+  df_input %>% 
+    group_by(reh) %>% 
+    mutate(timelag = as.integer(difftime(lead(datetime_utc), datetime_utc, units = "secs")), 
+           steplength = sqrt((y - lead(y,1))^2 + (x - lead(x,1))^2),
+           timelag_minutes = timelag/60,
+         speed_ms = steplength/timelag,
+         speed_kph = speed_ms * 3.6) -> df_output
+  
+  return(df_output)
+} 
+
+## Static points¨
+static_points <- function(df_input){
+    mutate(
+      nMinus3 = sqrt((lag(y, 3)-y)^2 + (lag(x, 3)-x)^2),
+      nMinus2 = sqrt((lag(y, 2)-y)^2+(lag(x, 2)-x)^2),  
+      nMinus1 = sqrt((lag(y, 1)-y)^2+(lag(x, 1)-x)^2),
+      nPlus1  = sqrt((y-lead(y, 1))^2+(x-lead(x, 1))^2), 
+      nPlus2  = sqrt((y-lead(y, 2))^2+(x-lead(x, 2))^2),  
+      nPlus3  = sqrt((y-lead(y, 3))^2+(x-lead(x, 3))^2)) %>% 
+  rowwise(.) %>% 
+  mutate(
+    stepMean = mean(c(nMinus3, nMinus2, nMinus1, nPlus1, nPlus2, nPlus3))) %>% 
+  ungroup() %>% 
+  mutate(static = stepMean < mean(stepMean, na.rm = TRUE)) -> df_output
+  
+  return(df_output)
+}
+
+intersect_counter_popularity <- function(line, point, buffer){
+  line %>% st_buffer(buffer) %>% 
+    st_intersection(., point) -> intersection
+    intersection %>% group_by(popularity, reh, month) %>% count() %>% mutate(buffer = buffer) -> popularity_count
+  
+  return(popularity_count)
+}
+
+intersect_counter_multibuffer <- function(line, point, buffer){
+  datalist = list()
+  
+  for (amount in buffer){
+    line %>% st_buffer(amount) %>% 
+      st_intersection(., point) %>% 
+      mutate(buffer = amount) %>% 
+      group_by(reh, month, buffer) %>% count() -> df
+    
+    datalist[[amount]] <- df
+  }
+  complete_table <- do.call(rbind, datalist)
+  
+  return(complete_table)
+}
+
+my_kde <- function(points,cellsize, bandwith, extent = NULL){
+  library(MASS)
+  library(sf)
+  library(tidyr)
+  if(is.null(extent)){
+    extent_vec <- st_bbox(points)[c(1,3,2,4)]
+  } else{
+    extent_vec <- st_bbox(extent)[c(1,3,2,4)]
+  }
+  
+  n_y <- ceiling((extent_vec[4]-extent_vec[3])/cellsize)
+  n_x <- ceiling((extent_vec[2]-extent_vec[1])/cellsize)
+  
+  extent_vec[2] <- extent_vec[1]+(n_x*cellsize)-cellsize
+  extent_vec[4] <- extent_vec[3]+(n_y*cellsize)-cellsize
+
+  coords <- st_coordinates(points)
+  mat <- kde2d(coords[,1],coords[,2],h = bandwith,n = c(n_x,n_y),lims = extent_vec)
+
+  mydf <- as.data.frame(mat[[3]])
+  
+  colnames(mydf) <- mat[[2]]
+  mydf$X <- mat[[1]]
+  
+  pivot_longer(mydf, -X,names_to = "Y",names_transform = list(Y = as.numeric))
+
+}
+```
+
+# To does {.unnumbered}
+
+-   Cross references
+
+-   Make plots larger
+
+-   Show random points similar to trajectories
+
+# Abstract {.unnumbered}
+
+Findings in short.
+
+# Introduction
+
+In addition to being the main habitat of European roe deer (Capreolus capreolus), forests provide diverse and outstanding settings for recreational activities such as hiking, horse riding and mountain biking [@coppes_etal17]
+
+The following hypotheses are therefore being tested:
+
+| Null hypothesis                                                                          | Alternate hypothesis                                                |
+|-------------------------------------|-----------------------------------|
+| Deer movement does not vary between weekdays and weekend                                 | Deer movement on average increases during the weekend               |
+| Deer movement is not constrained by recreational activity                                | Deer movement is constrained by activity                            |
+| There is no relationship between the popularity of recreational paths and deer activitiy | Deer movement is influenced by the popularity of recreational paths |
+
+: Hypotheses
+
+# Material and Methods
+
+## Datasets
+
+```{r, include = FALSE}
+deer <- read_csv("data/all_deer_cleaned.csv")
+```
+
+The deer dataset was provided from a research project conducted in partnership with the Wildnispark Sihlwald. The Wildnispark Zurich consists of a protected core area and a surrounding area with high recreational use due to its proximity to the city of Zurich. The dataset tracks the movement of 14 deer using GPS trackers. Each fix point in the dataset contains the following attributes:
+
+| Name         | Purpose                      |
+|--------------|------------------------------|
+| Latitude     | Positioning data             |
+| Longitude    | Positioning data             |
+| x            | Positioning data (projected) |
+| y            | Positioning data (projected) |
+| reh          | ID of individual deer        |
+| datetime_utc | Date and Timestamp           |
+
+: Data structure
+
+The characteristics of the data limit the computational movement analysis methods that can be applied.
+
+| Col1 | Col2 | Col3 | Col4 |
+|------|------|------|------|
+|      |      |      |      |
+|      |      |      |      |
+|      |      |      |      |
+|      |      |      |      |
+|      |      |      |      |
+
+To examine recreational activities additional data from the fitness tracking platform Strava was gathered by scraping the publicly available [global heatmap](https://www.strava.com/heatmap) using a script developed by [Nils Ratnaweera](https://github.com/ratnanil). The extracted raster tiles contained colour values to indicate the number of activities. This provided a relative indication of how often a route was frequented. All activity types were (cycling, running etc.) were included and the dataset contained no temporal data. Lastly street data in the publicly available swissTLM3d dataset provided by swisstopo was used to examine the influence of recreational paths.
+
+## Preprocessing and Exploratory Analysis
+
+```{r, include= FALSE}
+## Reading geometry, setting LV95 as coordinates 
+deer %>% 
+  st_as_sf(., coords = c("longitude", "latitude"), crs = 4326) %>% 
+  st_transform(., crs = 2056) %>% 
+  mutate(x = unlist(map(.$geometry,1)),
+        y = unlist(map(.$geometry,2))) %>% 
+  mutate(wdays = lubridate::wday(datetime_utc, label = TRUE),   ## Getting weekdays, timelag, stepMean and Speed data
+         week_start = getOption("lubridate.week.start", -1),
+         month = factor(format(datetime_utc,"%B"), levels = month.name), 
+         year = format(datetime_utc, "%Y"), 
+         weekend = case_when(
+                            wdays == "Sat" ~ "weekend",
+                            wdays == "Sun" ~ "weekend",
+                            TRUE ~ "weekday"
+  )) %>% 
+  speed_calculator(.)-> deer
+```
+
+```{r, include = FALSE}
+### Need to load the street/hiking data
+# First create a polygon with bounding block
+x_coord <- c( 2679000, 2687981, 2687981, 2679000)
+y_coord <- c(1241000, 1241000, 1228484, 1228484)
+xym <- cbind(x_coord, y_coord)
+
+p = Polygon(xym)
+ps = Polygons(list(p),1)
+extent = SpatialPolygons(list(ps))
+
+extent %>% st_as_sf() %>% st_set_crs(2056) %>% st_transform(crs = 4326) %>% st_bbox() -> bbox_coords
+
+strassen <- read_sf("/Users/nikitakrahenbuhl/Documents/Masters/PandT/project/datachallenge-n/data/swiss_TLM_data.gpkg","strassen") %>% st_set_crs(2056)
+
+strassen %>% filter(OBJEKTART == "Verbindung" |
+                    OBJEKTART == "2m Weg" |
+                    OBJEKTART == "1m Weg" |
+                    OBJEKTART == "2m Wegfragment" |
+                    OBJEKTART == "1m Wegfragment" |
+                    OBJEKTART == "Markierte Spur" ) -> strassen_2
+
+boden <- read_sf("/Users/nikitakrahenbuhl/Documents/Masters/PandT/project/datachallenge-n/data/swiss_TLM_data.gpkg","bodenbedeckung") %>% st_set_crs(2056)
+
+strassen %>% filter(!is.na(WANDERWEGE)) -> wanderwege
+```
+
+```{r, include = FALSE}
+strava <- rast("data/strava_all_11_hot/combined/05_cropped.tif") %>% crop(., extent)
+
+terra::extract(strava, vect(wanderwege), fun=mean) %>% 
+  cbind(wanderwege, .) %>% 
+  st_as_sf() %>% 
+  rename(popularity = X01_combined) -> wanderwege_popular
+
+ terra::extract(strava, vect(strassen), fun=mean) %>% 
+  cbind(strassen, .) %>% 
+  st_as_sf() %>% 
+  rename(popularity = X01_combined) -> strassen_popular
+```
+
+The provided deer data was re-projected to LV95 and the Euclidean distance and time lag were calculated to perform further movement analysis. Based on the spatial extent of the entire dataset a bounding polygon was generated and used to crop Strava activity data and recreational path data.
+
+The deer dataset consists of 14 individual deer, tracked over differing periods between 2013 and 2016 (@fig-timescale).
+
+```{r}
+#| label: fig-timescale
+#| fig-cap: "Numer of deer and respective sampling periods."
+ggplot(data = deer, aes(x = datetime_utc, y = reh)) +
+  geom_line() + xlab("Time") + ylab("Deer")
+```
+
+```{r, include = FALSE}
+deer %>% group_by(reh) %>% summarise(last_measurement = max(datetime_utc), first_measurement = min(datetime_utc)) %>% 
+  mutate(diff_dates = difftime(last_measurement,first_measurement, units = "days"))
+```
+
+Multiple sampling regimes, in intervals of 180 and 5 minutes were used @fig-frequency-plots . The shorter sampling periods were applied inconsistently and had a short average duration of 6 hours. The longer intervals of 180 minutes was therefore preferred to examine the long-term relationships between deer movement and recreational activity. Temporal outliers were removed by filtering to ± 2 minutes of the long sampling interval.
+
+```{r}
+#| label: fig-frequency-plots
+#| fig-cap: "Frequency plots"
+#| fig-height: 5
+#| fig-dpi: 100
+#| fig-subcap: 
+#|   - "Timelag distribution"
+#|   - "Distance distribution"
+#| layout-ncol: 2
+
+## Temporal overview
+## Sampling schedule
+#ggplot(deer) + geom_boxplot(aes(x=reh, y=timelag_minutes))
+ggplot(deer) + geom_histogram(aes(x=timelag_minutes), bins = 50) + xlab("Time between measurements (seconds)") + ylab("Frequency")
+#ggplot(deer) + geom_boxplot(aes(x=reh, y=steplength))
+ggplot(deer) + geom_histogram(aes(x=steplength), bins = 50) +xlab("Distance between measurements (m)") + ylab("Frequency")
+
+#ggplot(deer, aes(x=datetime_utc, y = timelag_minutes, color = reh)) + geom_line() + facet_wrap(~reh)
+```
+
+```{r, warning = FALSE}
+#| label: interactive-map
+#| fig-cap: "Spatial extent"
+## Initial spatial exploration
+deer %>% 
+  group_by(reh) %>% 
+  summarise(.) %>% 
+  st_convex_hull(.) -> mcp
+
+tmap_mode("view") 
+tm_shape(mcp) + tm_polygons("reh", alpha = 0.4) +
+tm_shape(wanderwege) + tm_lines(col = "tomato3") 
+```
+
+Spatial outliers were roughly removed by filtering the data to a step length of less than 2500 meters.
+
+```{r, include = FALSE}
+## Are some deer on average more active (disturbed) than others
+deer %>% 
+  st_drop_geometry() %>% 
+  filter(between(timelag_minutes, 178, 182) & steplength < 2500 & year == 2014) %>% 
+  group_by(reh) %>% summarise(avg_steplength_long = round(mean(steplength), 1)) %>% 
+  dplyr::arrange(desc(avg_steplength_long)) %>% 
+  rename(Deer = reh, `Average step length` = avg_steplength_long) %>%
+  knitr::kable()
+
+active_deer_long <- c("RE08", "RE11", "RE06")
+active_deer_short <- c("RE02", "RE07", "RE10", "RE13")
+
+month_filter <- c("January", "April", "July", "October")
+```
+
+Due to the large number of individual deer temporal extent a subset of deer (RE08, RE11, RE06) was chosen due to their relatively high concurrent activity levels (average distance moved between measurements), spatial proximity to recreational infrastructure and spatial independence from one another. The multi-annual sampling period was also reduced to examining 2014, as there was continuous and well-sampled data for the chosen deer groups. This was further reduced to examining the months of January, April, July and October.
+
+```{r}
+#| column: page
+#| label: fig-sampling-choices
+#| fig-cap: "Deer subset chosen for further analysis"
+#| fig-subcap: 
+#|   - "Spatial distribution of selected deer"
+#|   - "Sampling frequency of selected deer"
+#| layout-ncol: 2
+
+isolated_deer <- "RE06"
+
+deer %>% 
+  filter(between(timelag_minutes, 178, 182) & 
+           steplength < 2500 & 
+           reh %in% active_deer_long &
+           year == 2014 &
+           month %in% month_filter) -> deer_long
+
+deer %>%  filter(between(timelag_minutes, 178, 182) & 
+                 steplength < 2500 & reh == isolated_deer &
+                   year == 2014) -> single_deer  ##not filtered for year
+
+ggplot() +
+  base_map(bbox = bbox_coords, increase_zoom = 3, basemap = 'positron', nolabels = TRUE) +
+  geom_sf(data = st_transform(deer_long, crs = 4326), aes(color = reh)) + 
+  geom_sf(data = st_transform(wanderwege, crs =4326), color = "dark red") + 
+  labs(color = "Deer") + scale_color_brewer(palette="Dark2") +
+  theme_void()
+
+
+deer_long %>% 
+  st_drop_geometry(.) %>% 
+  mutate(month = format(datetime_utc,"%m"), year = format(datetime_utc, "%Y")) %>% 
+  group_by(reh, year, month, wdays) %>% 
+  summarise(mean_steplength = mean(steplength), mean_speed = mean(speed_ms), n=n()) %>% 
+  ggplot() + geom_tile(aes(x=wdays, y = month, fill = n)) + facet_grid(reh~year) +
+  labs(x = "Weekdays", y = "Months", fill = "Recorded points")
+```
+
+## Methods
+
+### Influence of the weekend on average movement
+
+Filtered deer movement was grouped by deer, month and whether movement was captured on a weekday or on a weekend. Average step length was calculated for each grouping and the values were compared using an ANOVA. A log transformation was applied to achieve a more normal distribution of the model residuals.
+
+```{r, include = FALSE}
+#| label: aov-boxplot
+deer_long %>% 
+  st_drop_geometry() %>% 
+  ggplot(.) + geom_boxplot(aes(x=weekend, y = log(steplength))) + facet_wrap(~month)
+```
+
+```{r, include = FALSE}
+#| column: page
+#| label: aov-normality
+#| layout-ncol: 2
+deer_long %>% 
+  st_drop_geometry() %>% 
+  aov(log(steplength) ~ weekend * month, data = .) -> aov1
+
+plot(aov1)
+```
+
+### Influence of recreational paths
+
+Two methods were used to examine the influence of recreational paths on deer movement. The first method used examined the number of times a deer trajectory crossed recreational paths and if there was any variation between weekdays and weekends.
+
+```{r}
+#| label: fig-interaction-paths
+#| fig-cap: "Deer movement in relation to hiking paths"
+#| layout-ncol: 3
+#| fig-subcap: 
+#|   - "Deer 06"
+#|   - "Deer 08"
+#|   - "Deer 11"
+single_deer %>% 
+  group_by(reh) %>% 
+  summarise(.) %>% 
+  st_convex_hull(.) %>% 
+  st_buffer(150) %>% 
+  st_intersection(wanderwege_popular, .) -> wanderweg_single_deer
+
+
+deer_long %>% 
+  group_by(reh) %>% 
+  summarise(.) %>% 
+  st_convex_hull(.) %>% 
+  st_buffer(150) %>% 
+  st_intersection(wanderwege_popular, .) -> wanderweg_deer
+
+
+
+ggplot() + 
+  geom_path(data = filter(deer_long, reh == "RE06"), aes(x = x, y = y), alpha = 0.3) + 
+  geom_sf(data = filter(wanderweg_deer, reh == "RE06"), color = "red") + theme_void()
+
+ggplot() + 
+  geom_path(data = filter(deer_long, reh == "RE08"), aes(x = x, y = y), alpha = 0.3) + 
+  geom_sf(data = filter(wanderweg_deer, reh == "RE08"), color = "red") + theme_void()
+
+ggplot() + 
+  geom_path(data = filter(deer_long, reh == "RE11"), aes(x = x, y = y), alpha = 0.3) + 
+  geom_sf(data = filter(wanderweg_deer, reh == "RE11"), color = "red") + theme_void() 
+
+#ggarrange(p1,p2,p3, ncol = 3)
+
+
+# ggplot(data = single_deer, aes(x = x, y = y)) +
+#     geom_path() + geom_sf(data = wanderweg_single_deer, color = "red", inherit.aes = FALSE) + facet_wrap(~month)
+```
+
+```{r, eval = FALSE}
+single_deer %>% 
+  st_as_sf(coords = c("x", "y"), agr = "constant") %>%
+  group_by(month) %>%
+  summarise(do_union = FALSE) %>%
+  st_cast("LINESTRING") -> single_deer_l
+
+st_intersection(single_deer_l, wanderweg_single_deer) %>% 
+  st_cast(., "MULTIPOINT") %>% st_cast("POINT") %>% 
+  group_by(month) %>% 
+  summarise(crossings = n()) -> single_crossings
+
+
+ggplot() + geom_sf(data = single_deer, alpha = 0.3) + 
+           geom_sf(data = single_crossings, aes(color = crossings)) 
+
+```
+
+The second method involved creating multiple buffers in 5m increments (5m, 10m, 15m, 20m, 25m) around recreational paths. For each examined deer and month the spatial extent and number of recorded points was used to generate a random distribution of points. Using an intersect the frequency of points within different buffers was compared to determine whether the relationship between deer and recreational paths follows a non-random pattern.
+
+```{r}
+#| label: fig-simulated-results
+#| layout-ncol: 2
+#| fig-height: 10
+#| fig-subcap: 
+#|   - "Observed values"
+#|   - "Simulated values"
+##Try againt random points
+set.seed(5)
+deer_long %>% 
+  group_by(reh, month) %>% 
+  count() %>% 
+  st_convex_hull() %>% 
+  pmap(function(reh, month, n, geometry){
+    t <- st_sample(geometry, size = n)
+    t <- st_as_sf(t)
+    t$month <- month
+    t$reh <- reh
+    t
+    })%>%
+  do.call(rbind, .) %>% 
+  st_set_crs(., 2056) %>% 
+  intersect_counter_multibuffer(wanderwege_popular, ., c(5,10,15,20,25)) %>% 
+  mutate(simulated = TRUE) -> df_simulated
+
+set.seed(5)
+deer_long %>% 
+  group_by(reh, month) %>% 
+  count() %>% 
+  st_convex_hull() %>% 
+  pmap(function(reh, month, n, geometry){
+    t <- st_sample(geometry, size = n)
+    t <- st_as_sf(t)
+    t$month <- month
+    t$reh <- reh
+    t
+    })%>%
+  do.call(rbind, .) %>% 
+  st_set_crs(., 2056) -> df_simulated_sf
+
+ggplot() +
+  geom_sf(data = st_transform(st_union(st_buffer(wanderwege, 25)), crs =4326)) +
+  geom_sf(data = st_transform(deer_long, crs = 4326), color = "blue", alpha = 0.01) +  theme_void() 
+
+ggplot() +
+  geom_sf(data = st_transform(st_union(st_buffer(wanderwege, 25)), crs =4326)) +
+  geom_sf(data = df_simulated_sf, color = "red", alpha = 0.01) +
+  theme_void() 
+```
+
+### Influence of popularity
+
+The influence of path popularity was determined by extracting raster values from the strava heatmap and assigning them to the individual segments. A single 25m buffer around all street data was used to determine the number of deer recorded in the vicinity and a Spearman Rank correlation was used to determine whether path popularity and deer presence correlated.
+
+```{r}
+#| label: fig-strava-heatmap
+#| fig-cap: "Popularity data from strava extracted to path data"
+#| fig-height: 10
+#| fig-subcap: 
+#|   - "All streets"
+#|   - "Hiking paths"
+#| layout-ncol: 2
+ggplot(strassen_popular) + geom_sf(aes(color = popularity)) + scale_color_viridis(option="magma") + theme_void() + theme(legend.position = "none")
+ggplot(wanderwege_popular) + geom_sf(aes(color = popularity)) + scale_color_viridis(option="magma") + theme_void()
+```
+
+# Results and Discussion
+
+## Influence of the weekend on average movements
+
+The ANOVA results @tbl-aov-results indicate that there is no significant difference in mean step length between weekdays and weekends. Whilst significant differences were observed between sample months and individual deer no significant interaction with whether data was recorded on the weekend was found.
+
+```{r}
+#| label: tbl-aov-results
+library(broom)
+aov_summary <- deer_long %>% 
+                st_drop_geometry() %>% 
+                ungroup() %>% 
+                do(tidy(aov(log(steplength) ~ weekend * month * reh, data = .))) %>% 
+                mutate_at(vars(-df, -term), funs(round(., 3)))
+
+knitr::kable(aov_summary)
+
+# aov_summary_spd <- deer_long %>% 
+#                 st_drop_geometry() %>% 
+#                 ungroup() %>% 
+#                 do(tidy(aov(log(speed_ms) ~ weekend * month, data = .)))
+# 
+# knitr::kable(aov_summary_spd)
+```
+
+```{r}
+#| label: fig-aov-boxplot-season
+#| fig-cap: "Average step length between weekdays and weekend data"
+# deer_long %>%
+#   st_drop_geometry() %>% 
+#   group_by(reh, month, wdays) %>% 
+#   summarise(avg_steplength = mean(steplength, na.rm = TRUE)) %>% 
+#   ggplot(., aes(x=wdays, y = avg_steplength, fill = reh)) + geom_bar(stat="identity", position = position_dodge(),  width=.5) + facet_wrap(reh~month) 
+
+# ##Activity differs between deer and to some degree between seasons, differences in weekdays is less apparent
+# deer_long %>% 
+#   st_drop_geometry() %>% 
+#   group_by(reh, month, weekend) %>% 
+#   summarise(avg_steplength = mean(steplength, na.rm = TRUE)) %>% 
+#   ggplot(., aes(x=weekend, y = avg_steplength, fill = reh)) + geom_bar(stat="identity", position = position_dodge(),  width=.5) +   facet_wrap(reh~month) 
+# 
+# ##Maybe add standard deviation to bars
+
+##Also unlcear, apart from October for RE08
+deer_long %>% 
+  st_drop_geometry() %>% 
+  group_by(reh, month, weekend) %>% 
+  ggplot(., aes(x=weekend, y = steplength, fill = weekend)) + geom_boxplot() + facet_wrap(~month) +
+  labs(x= "Period", y = "Average step length (m)", fill = "") + scale_fill_brewer(palette = "Dark2")
+
+```
+
+A further exploration using hourly averages for the same dataset showed a distinct pattern, matching the natural crepuscular movement of deer (@fig-daily-rhythm). Whilst data granularity was low seasonal shifts associated with shorter days in January were also observed. This implies that aggregated movement data is suitable for examining deer behaviour. However the influence of humans cannot be clearly identified at this scale. This could be a consequence of deer "freezing" in response to perturbations [@marantz_etal16], the duration of which does not lead to substantial differences in step length across 3 hour sampling intervals. To better identify the influence of recreational activity a higher temporal granularity, accelerometer data, coupled with either specific perturbation events or visitor data are required.
+
+```{r}
+#| label: fig-daily-rhythm
+#| fig-cap: "Average step length within a days"
+deer_long %>% 
+  st_drop_geometry() %>% 
+  mutate(hour = hour(round_date(datetime_utc, "hour"))) %>% 
+  ggline(data = ., x="hour", y="steplength", add = "mean_se", color = "reh", facet.by = "month") +
+  labs(x = "Hours in a day", y = "Average step length (m)", color = "Deer") + scale_color_brewer(palette = "Dark2")
+```
+
+## Influence of recreational paths
+
+### Comparing crossings on the weekend
+
+When examining the number of crossings across the same subset of deer a clear difference in frequency between weekdays and weekends was found. This indicates that deer are less likely to cross recreational paths during the weekend. This pattern is more in line with observed deer behaviour from literature, such as freezing and avoidance [@coppes_etal17]. Therefore intersection frequency is a preferable method when deer data has low temporal granularity and aggregated recreational activity is examined.
+
+```{r}
+#| label: fig-weekend-crossings
+#| fig-cap: "Number of path crossings, comparing weekend to weekdays"
+deer_long %>% 
+  st_as_sf(coords = c("x", "y"), agr = "constant") %>%
+  group_by(reh, month, weekend) %>%
+  summarise(do_union = FALSE) %>%
+  st_cast("LINESTRING") %>% 
+  st_intersection(., wanderwege_popular) %>% 
+  st_cast(., "MULTIPOINT") %>% st_cast("POINT") %>% 
+  group_by(reh, month, weekend) %>% count() -> crossings_weekend
+
+ggplot(crossings_weekend) + geom_bar(aes(x = weekend, y = n, fill = month), stat="identity", position = "stack",  width=.5) +  scale_y_continuous(expand = c(0, 0), limits = c(0, NA)) + facet_wrap(~reh) + labs(x="Period", y = "Number of path crossings", fill = "Months") + scale_fill_brewer(palette = "Dark2")
+```
+
+### Vicinity to paths compared to randomly generated points
+
+On average, fewer observations were recorded in the vicinity of paths when compared to randomly generated data. This indicates that in addition to reduced crossing of paths over the weekend deer on average avoid paths.
+
+```{r}
+#| label: fig-random-distribution
+#| fig-cap: "Comparison of deer distribution near paths to random points"
+deer_long %>%
+  intersect_counter_multibuffer(wanderwege_popular, ., c(5,10,15,20,25)) %>% 
+  mutate(simulated = FALSE) %>% 
+  rbind(., df_simulated) -> plot_randoms
+
+ggbarplot(plot_randoms, x = "buffer", y = "n", fill = "simulated", add = "mean_se", position = position_dodge(0.7)) + scale_y_continuous(expand = c(0, 0), limits = c(0, NA)) + labs(x = "Buffer amounts (m)", y = "Number of points in buffer", fill = "Simulated") + scale_fill_brewer(palette = "Dark2")
+
+#intersection <- st_intersection(wanderwege_popular, deer_long) %>% mutate(buffer = 25) %>% group_by(reh, buffer) %>% count()
+
+```
+
+When split by deer and month it is clear that this trend is avoidance behaviour is not completely consistent. This indicates that additional factors influence deer behaviour.
+
+```{r}
+#| label: fig-random-distribution-split
+#| fig-cap: "Comparison of deer distribution near paths to random points, subset by month and deer" 
+ggplot(plot_randoms, aes(x=buffer, y = n, fill = simulated)) + 
+  geom_bar(color = "black", stat="identity", position = position_dodge()) + scale_y_continuous(expand = c(0, 0), limits = c(0, NA)) +
+  facet_grid(reh~month) + labs(x = "Buffer amounts (m)", y = "Number of points in buffer", fill = "Simulated") + theme_pubr() + scale_fill_brewer(palette = "Dark2")
+```
+
+## Popularity
+
+A visual investigation of RE06 ([@fig-popularity-re])was used to identify whether path popularity could be one of these additional factors. The distribution of points was clearly influenced by the more popular path. Whilst deer measurements were largely concentrated between two paths, the deer was more likely to cross the less frequented secondary paths.
+
+```{r}
+#| label: fig-popularity-re
+#| fig-cap: "Distribution of RE06 over sample period" 
+#| layout-nrow: 2
+st_as_sfc(st_bbox(single_deer)) %>% st_intersection(strassen_popular, .) -> bounding_box
+
+ggplot() + 
+  geom_sf(data = single_deer, alpha = 0.2) + 
+  geom_sf(data = bounding_box, aes(color = popularity)) + scale_color_viridis(option="magma") + theme_void() + labs(color = "Path popularity")
+
+
+single_deer_kde <- my_kde(points = single_deer, cellsize = 3, bandwith = 50)
+q95 <- quantile(single_deer_kde$value,probs = 0.8)
+single_deer_kde <- single_deer_kde %>%
+  mutate(
+    value_new = ifelse(value>q95,value,NA),
+    value_new = log10(value_new)
+  )
+ggplot() + 
+  geom_raster(data = single_deer_kde, aes(X, Y, fill = value_new)) + scale_fill_viridis(na.value = NA) +
+  geom_sf(data = bounding_box, inherit.aes = FALSE, aes(color = popularity)) + scale_color_viridis(option="magma") + theme_void() + theme(legend.position= "none")
+
+```
+
+However further investigation involving the previously utilised subset of deer indicated no correlation between path popularity and deer presence (@fig-popularity-correlation). It is important to consider that the derived popularity data is relative, contains no temporal component and does not differentiate activity types. Platforms that provide this additional data, can be a valuable and inexpensive source of information. They can be used alongside traditional infrared counters to better examine deer interactions over longer time frames.
+
+```{r}
+#| label: fig-popularity-correlation
+#| fig-cap: "Correlation between popularity and frequency of recorded deer within a 50m buffer of streets" 
+## Need to actually subset this - roads that have deer in their vicinity - threshold value
+# deer %>%
+#   st_as_sf(., coords = c("x", "y"), crs = 2056) %>%
+#   filter(between(timelag_minutes, 178, 182) &
+#            steplength < 2500) %>%
+#   intersect_counter_popularity(strassen_popular, ., buffer=30) %>% ggscatter(., x = "popularity", y = "n", add = "reg.line", add.params = list(color = "red")) + stat_cor(method="pearson")
+
+deer_long %>%
+  intersect_counter_popularity(strassen_popular, ., buffer=50) %>% ggscatter(., x = "popularity", y = "n", color = "reh", add = "reg.line", add.params = list(color = "red")) + stat_cor(method="pearson", aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~"))) + labs(x = "Popularity", y = "Number of intersections", color = "Deer") + scale_color_brewer(palette = "Dark2")
+
+# deer %>%
+#   st_as_sf(., coords = c("x", "y"), crs = 2056) %>%
+#   filter(between(timelag_minutes, 178, 182) &
+#            steplength < 2500) %>%
+#   intersect_counter_popularity(wanderwege_popular, ., buffer=30) %>% ggscatter(., x = "popularity", y = "n", add = "reg.line", add.params = list(color = "red")) + stat_cor(method="pearson", aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~")))
+```
+
+# Conclusion and future research
+
+As outdoor recreational activities increase in popularity there is a continued need to better understand what the effects are on nearby wildlife. Derived movement data from three deer over the course of 2014 highlighted that recreational paths influence their movement patterns, resulting in greater avoidance overall and reduced crossing of the paths during the weekends. To determine responses to individual perturbation events a higher sampling rate, combined with accelerometer data is however required. Increased outdoor recreation also presents an opportunity to integrate activity data to better identify potential hotspots that may have a disproportionate influence on deer behaviour. A combination of temporally concurrent GPS-tracked activity data, verified by on the ground counters are required to further examine long-term interactions between deer and recreational activities.
+
+```{r,  eval = FALSE}
+## OLD CODE:
+
+deer %>% 
+  mutate(year = format(datetime_utc, "%Y")) %>% 
+  filter(between(timelag_minutes, 3, 7) & 
+           steplength < 2500  &
+           month == "July" &
+           year == 2014) -> deer_short
+
+deer_short %>% 
+  mutate(date = as.POSIXct(substr(datetime_utc, 0, 10), format="%Y-%m-%d", tz = "UTC")) %>% 
+  group_by(reh, date) %>% 
+  summarise(min = min(datetime_utc), max = max(datetime_utc), n = n()) %>% 
+  mutate(duration = as.numeric(difftime(max, min, units = "hours"))) %>% 
+  view()
+
+
+
+ggplot(data = deer_short, aes(x = datetime_utc, y = reh)) +
+  geom_line() + geom_point() + xlab("Time") + ylab("Deer")
+
+deer_short %>% 
+  ggplot(., aes(x=x, y=y, color=reh)) + geom_path() + geom_point() +
+  coord_fixed()
+
+deer_short %>% 
+  st_drop_geometry(.) %>%
+  mutate(month = format(datetime_utc,"%m"), year = format(datetime_utc, "%Y")) %>% 
+  group_by(reh, year, month, wdays) %>% 
+  summarise(mean_steplength = mean(steplength), mean_speed = mean(speed_ms), n=n()) %>% 
+  ggplot() + geom_tile(aes(x=wdays, y = month, fill = n)) + facet_grid(reh~year) 
+
+deer_short %>% 
+  ggplot(data = ., aes(x=datetime_utc, y=steplength, color = reh)) + geom_line() + geom_point() + facet_grid(wdays~reh) 
+```
+
+```{r, eval = FALSE}
+deer_long %>% 
+  group_by(reh, month) %>%
+  summarise(do_union = FALSE) %>%
+  st_cast("LINESTRING") -> t3
+# 
+# ggplot(t3) + geom_sf(aes(color = reh)) + geom_sf(data = wanderwege_popular, color = "red", inherit.aes = FALSE) +
+#   facet_wrap(~month) 
+
+# t3 %>% st_intersection(., wanderwege_popular) %>% 
+#   st_cast(., "MULTIPOINT") %>% st_cast("POINT") %>% 
+#   group_by(reh, year, month) %>% count() -> crossings
+```
