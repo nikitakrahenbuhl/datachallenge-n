@@ -3,3 +3,12 @@
 .RData
 .Ruserdata
 data/*
+/.quarto/
+bookdown_attempt/*
+rosm.cache/*
+strava_all_11_hot/*
+strava.R
+old/*
+semester_project_cache/*
+semester_project_files/*
+datachallenge-n_files/*
