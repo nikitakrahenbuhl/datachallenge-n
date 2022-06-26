@@ -1,5 +1,5 @@
 ---
-title: "Is Deer Movement affected be Recreational Activity?"
+title: "Is Deer Movement affected by Recreational Activity?"
 subtitle: "Submission for the MSc Module Computational Movement Analysis"
 author: "Nikita Krähenbühl"
 format: 
