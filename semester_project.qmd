@@ -1,4 +1,7 @@
 ---
+project: 
+  type: website
+  output-dir: docs
 title: "Is Deer Movement affected be Recreational Activity?"
 subtitle: "Submission for the MSc Module Computational Movement Analysis"
 author: "Nikita Krähenbühl"
