@@ -2,6 +2,7 @@
 title: "Is Deer Movement affected by Recreational Activity?"
 subtitle: "Submission for the MSc Module Computational Movement Analysis"
 author: "Nikita Krähenbühl"
+abstract: "Findings in short"
 format: 
   html:
     toc: true    
@@ -9,6 +10,7 @@ format:
     number-sections: true
 editor: source
 bibliography: references.bib
+tbl-cap-location: bottom
 ---
 
 ```{r include=FALSE}
@@ -134,9 +136,7 @@ my_kde <- function(points,cellsize, bandwith, extent = NULL){
 
 -   Show random points similar to trajectories
 
-# Abstract {.unnumbered}
 
-Findings in short.
 
 # Introduction
 
