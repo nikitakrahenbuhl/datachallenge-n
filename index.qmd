@@ -1,6 +1,6 @@
 ---
 title: "Is Deer Movement affected by Recreational Activity?"
-subtitle: "Submission for the MSc Module Computational Movement Analysis"
+subtitle: "Patterns and Trends in Environmental Data (ZHAW)"
 author: "Nikita Krähenbühl"
 format: 
   html:
@@ -169,6 +169,7 @@ The deer dataset was provided as a result of a research project conducted in par
 
 The characteristics of the data limit the computational movement analysis methods that can be applied ([@tbl-movement]).
 
+:::{.column-page}
 +-----------------------------------------------------+----------------------------+--------------------------------+-------------------------------------------------------------+
 | Properties of the movement spaces                   | Properties of the movement | Perspective of the observation | Semantic level of interest                                  |
 +=====================================================+============================+================================+=============================================================+
@@ -186,8 +187,9 @@ The characteristics of the data limit the computational movement analysis method
 |                                                     |                            |                                |                                                             |
 |     -   Raster: Density                             |                            |                                |                                                             |
 +-----------------------------------------------------+----------------------------+--------------------------------+-------------------------------------------------------------+
-
 : Dimensions of representing movement based on @laube14 {#tbl-movement}
+
+:::
 
 To examine recreational activities additional data from the fitness tracking platform Strava was gathered by scraping the publicly available [global heatmap](https://www.strava.com/heatmap) using a script developed by [Nils Ratnaweera](https://github.com/ratnanil). The extracted raster tiles contained colour values to indicate the number of activities. This provided a relative indication of how often a route was frequented. All activity types were (cycling, running etc.) were included and the dataset contained no temporal data. Lastly street data in the publicly available swissTLM3d dataset provided by swisstopo was used to examine the influence of recreational paths.
 
