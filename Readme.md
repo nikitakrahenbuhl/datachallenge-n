@@ -3,7 +3,7 @@
 **Patterns & Trends in Environmental Data / Computational Movement Analysis Geo 880**
 
 | Semester:      | FS22                                                                   |
-|------------------------|-----------------------------------------------|
+|----------------|------------------------------------------------------------------------|
 | **Data:**      | Roe Deer Movement Data                                                 |
 | **Title:**     | Examining the impact of recreational outdoor activity on deer movement |
 | **Student 1:** | Nikita Krähenbühl                                                      |
