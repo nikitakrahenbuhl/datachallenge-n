@@ -134,13 +134,17 @@ Outdoor recreation has gained increasing importance over the last decades, with 
 
 In this study GPS recordings of roe deer *Capreolus capreolus* from a popular forest in the vicinity of Zürich Switzerland was analysed for changes in spatio-temporal activity in response to human recreational activities. To provide a proxy for recreational activity data from activity app Strava was combined with popular hiking routes. Based on a brief overview of the literature a set of hypotheses were established and explored (@tbl-hypotheses).
 
++------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
 | Null hypothesis                                                                          | Alternate hypothesis                                                |
-|----------------------------------------|--------------------------------|
++==========================================================================================+=====================================================================+
 | Deer movement does not vary between weekdays and weekend                                 | Deer movement on average changes during the weekend                 |
++------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
 | Deer movement is not constrained by recreational paths                                   | Deer movement is constrained by recreational paths                  |
++------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
 | There is no relationship between the popularity of recreational paths and deer activitiy | Deer movement is influenced by the popularity of recreational paths |
++------------------------------------------------------------------------------------------+---------------------------------------------------------------------+
 
-: The examined null and alternate hypotheses to explore the influence of human recreation on the spatio-temporal behaviour of roe deer. {#tbl-hypotheses}
+: The null and alternate hypotheses used to explore the impact of human recreation on the spatio-temporal behaviour of roe deer. {#tbl-hypotheses}
 
 # Material and Methods
 
@@ -163,15 +167,27 @@ The deer dataset was provided as a result of a research project conducted in par
 
 : Data structure {#tbl-structure}
 
-The characteristics of the data limit the computational movement analysis methods that can be applied.
+The characteristics of the data limit the computational movement analysis methods that can be applied ([@tbl-movement]).
 
-| Col1 | Col2 | Col3 | Col4 |
-|------|------|------|------|
-|      |      |      |      |
-|      |      |      |      |
-|      |      |      |      |
-|      |      |      |      |
-|      |      |      |      |
++-----------------------------------------------------+----------------------------+--------------------------------+-------------------------------------------------------------+
+| Properties of the movement spaces                   | Properties of the movement | Perspective of the observation | Semantic level of interest                                  |
++=====================================================+============================+================================+=============================================================+
+| -   Continuous, 2D movement spaces                  | -   Unconstrained          | -   Lagrangian (GPS)           | -   Distribution of fixes                                   |
+|                                                     |                            |                                |                                                             |
+| -   Conceptual models:                              | -   Intermittent           | -   Continuous                 | -   Movement quality (speed)                                |
+|                                                     |                            |                                |                                                             |
+|     -   Entity based: Deer trajectories             | -   Active                 | -   Active tracking            | -   Interaction with static geometries (crossing/intersect) |
+|                                                     |                            |                                |                                                             |
+|     -   Field based: Density                        |                            |                                |                                                             |
+|                                                     |                            |                                |                                                             |
+| -   Data structures:                                |                            |                                |                                                             |
+|                                                     |                            |                                |                                                             |
+|     -   Vectors: Individual deer, timestamped fixes |                            |                                |                                                             |
+|                                                     |                            |                                |                                                             |
+|     -   Raster: Density                             |                            |                                |                                                             |
++-----------------------------------------------------+----------------------------+--------------------------------+-------------------------------------------------------------+
+
+: Dimensions of representing movement based on @laube14 {#tbl-movement}
 
 To examine recreational activities additional data from the fitness tracking platform Strava was gathered by scraping the publicly available [global heatmap](https://www.strava.com/heatmap) using a script developed by [Nils Ratnaweera](https://github.com/ratnanil). The extracted raster tiles contained colour values to indicate the number of activities. This provided a relative indication of how often a route was frequented. All activity types were (cycling, running etc.) were included and the dataset contained no temporal data. Lastly street data in the publicly available swissTLM3d dataset provided by swisstopo was used to examine the influence of recreational paths.
 
@@ -210,13 +226,6 @@ extent = SpatialPolygons(list(ps))
 extent %>% st_as_sf() %>% st_set_crs(2056) %>% st_transform(crs = 4326) %>% st_bbox() -> bbox_coords
 
 strassen <- read_sf("/Users/nikitakrahenbuhl/Documents/Masters/PandT/project/datachallenge-n/data/swiss_TLM_data.gpkg","strassen") %>% st_set_crs(2056)
-
-strassen %>% filter(OBJEKTART == "Verbindung" |
-                    OBJEKTART == "2m Weg" |
-                    OBJEKTART == "1m Weg" |
-                    OBJEKTART == "2m Wegfragment" |
-                    OBJEKTART == "1m Wegfragment" |
-                    OBJEKTART == "Markierte Spur" ) -> strassen_2
 
 boden <- read_sf("/Users/nikitakrahenbuhl/Documents/Masters/PandT/project/datachallenge-n/data/swiss_TLM_data.gpkg","bodenbedeckung") %>% st_set_crs(2056)
 
@@ -257,9 +266,9 @@ Multiple sampling regimes, in intervals of 180 and 5 minutes were used ([@fig-fr
 
 ```{r}
 #| label: fig-frequency-plots
+#| column: page
 #| fig-cap: "Frequency plots"
 #| fig-height: 5
-#| fig-dpi: 100
 #| fig-subcap: 
 #|   - "Timelag distribution"
 #|   - "Distance distribution"
@@ -268,18 +277,17 @@ Multiple sampling regimes, in intervals of 180 and 5 minutes were used ([@fig-fr
 ## Temporal overview
 ## Sampling schedule
 #ggplot(deer) + geom_boxplot(aes(x=reh, y=timelag_minutes))
-ggplot(deer) + geom_histogram(aes(x=timelag_minutes), bins = 50) + xlab("Time between measurements (seconds)") + ylab("Frequency")
+ggplot(deer) + geom_histogram(aes(x=timelag_minutes), bins = 50) + xlab("Time between measurements (seconds)") + ylab("Frequency") + scale_y_continuous(expand = c(0, 0), limits = c(0, NA))
 #ggplot(deer) + geom_boxplot(aes(x=reh, y=steplength))
-ggplot(deer) + geom_histogram(aes(x=steplength), bins = 50) +xlab("Distance between measurements (m)") + ylab("Frequency")
+ggplot(deer) + geom_histogram(aes(x=steplength), bins = 50) +xlab("Distance between measurements (m)") + ylab("Frequency") + scale_y_continuous(expand = c(0, 0), limits = c(0, NA))
 
-#ggplot(deer, aes(x=datetime_utc, y = timelag_minutes, color = reh)) + geom_line() + facet_wrap(~reh)
 ```
 
 Several spatial outliers were identified in [@fig-interactive-map] and roughly removed by filtering the data to a step length of less than 2500 meters.
 
 ```{r, warning = FALSE}
 #| label: fig-interactive-map
-#| fig-cap: "Spatial extent of the deer dataset, outliers in red."
+#| fig-cap: "Spatial extent of the deer dataset - outliers in red."
 ## Initial spatial exploration
 deer %>% 
   group_by(reh) %>% 
@@ -659,7 +667,7 @@ deer_long %>%
 As outdoor recreational activities increase in popularity there is a continued need to better understand what the effects are on nearby wildlife. Derived movement data from three deer over the course of 2014 did not show differences in aggregated movement between the weekdays and weekends. However when recreational paths were examined, they were found to influence deer movement, resulting in greater avoidance overall and reduced crossing of the paths during the weekends. To determine responses to individual perturbation events a higher sampling rate, combined with accelerometer data is likely required. The observed avoidance also did not correlate with the popularity of the paths that deer interacted with during the study. Nonetheless, increased outdoor recreation and tracking also presents an opportunity to integrate more activity data. If this data is temporally concurrent with deer tracking, enriched with activity type and verified by stationary counters it is likely to be an invaluable tool to examine long-term interactions between deer and human recreation.
 
 ```{r,  eval = FALSE}
-## OLD CODE:
+## OLD CODE - for perusing.
 
 deer %>% 
   mutate(year = format(datetime_utc, "%Y")) %>% 
@@ -739,4 +747,11 @@ deer_long %>%
 # t3 %>% st_intersection(., wanderwege_popular) %>% 
 #   st_cast(., "MULTIPOINT") %>% st_cast("POINT") %>% 
 #   group_by(reh, year, month) %>% count() -> crossings
+
+strassen %>% filter(OBJEKTART == "Verbindung" |
+                    OBJEKTART == "2m Weg" |
+                    OBJEKTART == "1m Weg" |
+                    OBJEKTART == "2m Wegfragment" |
+                    OBJEKTART == "1m Wegfragment" |
+                    OBJEKTART == "Markierte Spur" ) -> strassen_2
 ```
