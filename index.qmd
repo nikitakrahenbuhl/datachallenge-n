@@ -128,14 +128,6 @@ my_kde <- function(points,cellsize, bandwith, extent = NULL){
 }
 ```
 
-# To does {.unnumbered}
-
--   Cross references
-
--   Make plots larger
-
--   Show random points similar to trajectories
-
 # Introduction
 
 Outdoor recreation has gained increasing importance over the last decades, with both the amount of activites increasing and the activity types becoming more active [@buergi_etal21]. Forests are consequently under pressure to cater for this increased demand in active recreation without impairing other ecosystem functions and services. One point of contention and occasional conflict is the disturbance of wildlife by human recreational activities [@wilkes-allemann_etal15]. Free-living animals often react to human presence similarly to the presence of natural predators, ranging from physiological stress responses, behavioural changes or reduction in reproductive success [@beale_monaghan04]. Responses can be short-term, such as fleeing or even lead to long-term responses, such as avoidance. Due to advances in data collection technologies, such as GPS collars, accelerometers and even heart rate monitors more information regarding animal movement and behaviour can be collected to better understand the influence of human recreation on movement patterns. Determining the movement and activity of humans has also advanced, from traditional counters to precise GPS tracks from outdoor activity apps.
@@ -144,8 +136,8 @@ In this study GPS recordings of roe deer *Capreolus capreolus* from a popular fo
 
 | Null hypothesis                                                                          | Alternate hypothesis                                                |
 |----------------------------------------|--------------------------------|
-| Deer movement does not vary between weekdays and weekend                                 | Deer movement on average increases during the weekend               |
-| Deer movement is not constrained by recreational activity                                | Deer movement is constrained by activity                            |
+| Deer movement does not vary between weekdays and weekend                                 | Deer movement on average changes during the weekend                 |
+| Deer movement is not constrained by recreational paths                                   | Deer movement is constrained by recreational paths                  |
 | There is no relationship between the popularity of recreational paths and deer activitiy | Deer movement is influenced by the popularity of recreational paths |
 
 : The examined null and alternate hypotheses to explore the influence of human recreation on the spatio-temporal behaviour of roe deer. {#tbl-hypotheses}
@@ -261,7 +253,7 @@ deer %>% group_by(reh) %>% summarise(last_measurement = max(datetime_utc), first
   mutate(diff_dates = difftime(last_measurement,first_measurement, units = "days"))
 ```
 
-Multiple sampling regimes, in intervals of 180 and 5 minutes were used @fig-frequency-plots. The shorter sampling periods were applied inconsistently and had a short average duration of 6 hours. The longer intervals of 180 minutes was therefore preferred to examine the long-term relationships between deer movement and recreational activity. Temporal outliers were removed by filtering to ± 2 minutes of the long sampling interval.
+Multiple sampling regimes, in intervals of 180 and 5 minutes were used ([@fig-frequency-plots]). The shorter sampling periods were applied inconsistently and had a short average duration of 6 hours. The longer intervals of 180 minutes was therefore preferred to examine the long-term relationships between deer movement and recreational activity. Temporal outliers were removed by filtering to ± 2 minutes of the long sampling interval.
 
 ```{r}
 #| label: fig-frequency-plots
@@ -283,18 +275,23 @@ ggplot(deer) + geom_histogram(aes(x=steplength), bins = 50) +xlab("Distance betw
 #ggplot(deer, aes(x=datetime_utc, y = timelag_minutes, color = reh)) + geom_line() + facet_wrap(~reh)
 ```
 
-Several spatial outliers were identified [@fig-interactiv-map] and roughly removed by filtering the data to a step length of less than 2500 meters.
+Several spatial outliers were identified in [@fig-interactive-map] and roughly removed by filtering the data to a step length of less than 2500 meters.
 
 ```{r, warning = FALSE}
 #| label: fig-interactive-map
-#| fig-cap: "Spatial extent of the deer dataset"
+#| fig-cap: "Spatial extent of the deer dataset, outliers in red."
 ## Initial spatial exploration
 deer %>% 
   group_by(reh) %>% 
   summarise(.) %>% 
   st_convex_hull(.) -> mcp
 
+deer %>% 
+  filter(steplength > 2500) -> outliers
+
+
 tmap_mode("view") 
+tm_shape(outliers) + tm_dots(col = "red", size = 0.3) +
 tm_shape(mcp) + tm_polygons("reh", alpha = 0.4) +
 tm_shape(wanderwege) + tm_lines(col = "tomato3") 
 ```
@@ -315,7 +312,7 @@ active_deer_short <- c("RE02", "RE07", "RE10", "RE13")
 month_filter <- c("January", "April", "July", "October")
 ```
 
-Due to the large number of individual deer temporal extent a subset of deer (RE08, RE11, RE06) was chosen due to their relatively high concurrent activity levels (average distance moved between measurements), spatial proximity to recreational infrastructure and spatial independence from one another. The multi-annual sampling period was also reduced to examining 2014, as there was continuous and well-sampled data for the chosen deer groups [@fig-sampling-choices]. This was further reduced to examining the months of January, April, July and October.
+Due to the large number of individual deer temporal extent a subset of deer (RE08, RE11, RE06) was chosen due to their relatively high concurrent activity levels (average distance moved between measurements), spatial proximity to recreational infrastructure and spatial independence from one another. The multi-annual sampling period was also reduced to examining 2014, as there was continuous and well-sampled data for the chosen deer groups ([@fig-sampling-choices]). This was further reduced to examining the months of January, April, July and October.
 
 ```{r}
 #| column: page
@@ -358,9 +355,9 @@ deer_long %>%
 
 ## Methods
 
-### Influence of the weekend on average movement
+### Differences in movement between the weekdays and the weekend
 
-Filtered deer movement was grouped by deer, month and whether movement was captured on a weekday or on a weekend. Average step length was calculated for each grouping and the values were compared using an ANOVA. A log transformation was applied to achieve a more normal distribution of the model residuals.
+Filtered movement data was grouped by deer, month and whether movement was captured on a weekday or on a weekend. Average step length was calculated for each grouping and values for each month and weekday:weekend were compared using an ANOVA. A log transformation was applied to achieve a more normal distribution of the model residuals.
 
 ```{r, include = FALSE}
 #| label: aov-boxplot
@@ -380,7 +377,7 @@ deer_long %>%
 plot(aov1)
 ```
 
-### Influence of recreational paths
+### Impact of recreational paths
 
 Two methods were used to examine the influence of recreational paths on deer movement. The first method used examined the number of times a deer trajectory crossed recreational paths and if there was any variation between weekdays and weekends.
 
@@ -492,7 +489,6 @@ deer_long %>%
   rename(x = geometry) %>% 
   rbind(., df_simulated_sf) -> vis1 
 
-
 ggplot() +
   geom_sf(data = st_transform(st_union(st_buffer(filter(wanderweg_deer, reh == "RE06"), 25)), crs =4326)) +
   geom_sf(data = st_transform(filter(vis1, reh == "RE06"), crs = 4326), aes(color = simulated), alpha = 0.2) +  theme_void() + facet_wrap(~simulated) + theme(legend.position = "none") + scale_color_brewer(palette="Dark2")
@@ -506,13 +502,13 @@ ggplot() +
   geom_sf(data = st_transform(filter(vis1, reh == "RE11"), crs = 4326), aes(color = simulated), alpha = 0.2) +  theme_void() + facet_wrap(~simulated) + theme(legend.position = "none") + scale_color_brewer(palette="Dark2")
 ```
 
-### Influence of popularity
+### Role of path popularity
 
-The influence of path popularity was determined by extracting raster values from the strava heatmap and assigning them to the individual segments. A single 25m buffer around all street data was used to determine the number of deer recorded in the vicinity and a Spearman Rank correlation was used to determine whether path popularity and deer presence correlated.
+The influence of path popularity was determined by extracting raster values from the Strava heatmap and assigning them to the individual segments from the street data. A single 25m buffer around all streets was used to determine the number of deer recorded in the vicinity and a Spearman Rank correlation was used to determine whether path popularity and deer presence correlated.
 
 ```{r}
 #| label: fig-strava-heatmap
-#| fig-cap: "Popularity data from strava extracted to path data"
+#| fig-cap: "Popularity data from Strava extracted to path data"
 #| fig-height: 10
 #| fig-subcap: 
 #|   - "All streets"
@@ -524,9 +520,9 @@ ggplot(wanderwege_popular) + geom_sf(aes(color = popularity)) + scale_color_viri
 
 # Results and Discussion
 
-## Influence of the weekend on average movements
+## Differences in movement between the weekdays and the weekend
 
-The ANOVA results @tbl-aov-results indicate that there is no significant difference in mean step length between weekdays and weekends. Whilst significant differences were observed between sample months and individual deer no significant interaction with whether data was recorded on the weekend was found.
+The ANOVA results ([@tbl-aov-results]) indicated that no significant difference in mean step length between weekdays and weekends, meaning the null hypothesis is accepted ([@tbl-hypotheses]). Whilst significant differences were observed between sample months and individual deer no significant interaction with whether data was recorded on the weekend was found.
 
 ```{r}
 #| label: tbl-aov-results
@@ -557,7 +553,7 @@ deer_long %>%
 
 ```
 
-A further exploration using hourly averages for the same dataset showed a distinct pattern, matching the natural crepuscular movement of deer (@fig-daily-rhythm). Whilst data granularity was low seasonal shifts associated with shorter days in January were also observed. This implies that aggregated movement data is suitable for examining deer behaviour. However the influence of humans cannot be clearly identified at this scale. This could be a consequence of deer "freezing" in response to perturbations [@marantz_etal16], the duration of which does not lead to substantial differences in step length across 3 hour sampling intervals. To better identify the influence of recreational activity a higher temporal granularity, accelerometer data, coupled with either specific perturbation events or visitor data are required.
+A further exploration using hourly averages for the same dataset showed a distinct pattern, matching the natural crepuscular movement of deer (@fig-daily-rhythm). Whilst data granularity was low seasonal shifts associated with shorter days in January were also observed. This implies that aggregated movement data is suitable for examining deer behaviour. However the influence of humans cannot be clearly identified at this scale. This could be a consequence of deer "freezing" in response to perturbations [@marantz_etal16], the duration of which does not lead to substantial differences in step length across 3 hour sampling intervals. To better identify the influence of recreational activity a higher temporal granularity, accelerometer data, coupled with richer human recreational data (timestamped activities, counters).
 
 ```{r}
 #| label: fig-daily-rhythm
@@ -569,7 +565,7 @@ deer_long %>%
   labs(x = "Hours in a day", y = "Average step length (m)", color = "Deer") + scale_color_brewer(palette = "Dark2")
 ```
 
-## Influence of recreational paths
+## Impact of recreational paths
 
 ### Comparing crossings on the weekend
 
@@ -592,7 +588,7 @@ ggplot(crossings_weekend) + geom_bar(aes(x = weekend, y = n, fill = month), stat
 
 ### Vicinity to paths compared to randomly generated points
 
-On average, fewer observations were recorded in the vicinity of paths when compared to randomly generated data. This indicates that in addition to reduced crossing of paths over the weekend deer on average avoid paths.
+On average, fewer observations were recorded in the vicinity of paths when compared to randomly generated data ([@fig-random-distribution]). This indicates that in addition to reduced crossing of paths over the weekend deer avoided paths on average.
 
 ```{r}
 #| label: fig-random-distribution
@@ -606,7 +602,7 @@ ggbarplot(plot_randoms, x = "buffer", y = "n", fill = "simulated", add = "mean_s
 
 ```
 
-When split by deer and month it is clear that this trend is avoidance behaviour is not completely consistent. This indicates that additional factors influence deer behaviour.
+When split by deer and month the avoidance behaviour was not consistent, with differences both between deer and between months for the same deer ([@fig-random-distribution-split]). This indicates that additional factors influence deer behaviour, likely linked to the use of the path. These additional factors could be elucidated by picking specific time windows, linked to perturbation events (i.e. no activity, logging, high activity). Nonetheless comparing real deer distribution to random deer distribution is a promising high level method to examine the effect of certain objects on the spatial distribution of the deer.
 
 ```{r}
 #| label: fig-random-distribution-split
@@ -616,13 +612,18 @@ ggplot(plot_randoms, aes(x=buffer, y = n, fill = simulated)) +
   facet_grid(reh~month) + labs(x = "Buffer amounts (m)", y = "Number of points in buffer", fill = "Simulated") + theme_pubr() + scale_fill_brewer(palette = "Dark2")
 ```
 
-## Popularity
+Whilst no statistical analysis of the results was performed the results indicate that built infrastructure has a substantial effect on the spatial distribution of deer in this study.
 
-A visual investigation of RE06 [@fig-popularity-re] was used to identify whether path popularity could be one of these additional factors. The distribution of points was clearly influenced by the more popular path. Whilst deer measurements were largely concentrated between two paths, the deer was more likely to cross the less frequented secondary paths.
+## Role of path popularity
+
+A visual investigation of RE06 ([@fig-popularity-re]) was used to identify whether path popularity could be established as an aforementioned additional influencing factor. The distribution of points was clearly affected by the more popular path. Whilst deer measurements were largely concentrated between two paths, the deer was more likely to cross the less frequented secondary paths.
 
 ```{r}
 #| label: fig-popularity-re
 #| fig-cap: "Distribution of RE06 over sample period" 
+#| fig-subcap: 
+#|   - "Distribution of point data"
+#|   - "Kernel density estimation of point data (<0.8 cutoff)"
 #| layout-nrow: 2
 st_as_sfc(st_bbox(single_deer)) %>% st_intersection(strassen_popular, .) -> bounding_box
 
@@ -644,7 +645,7 @@ ggplot() +
 
 ```
 
-However further investigation involving the previously utilised subset of deer indicated no correlation between path popularity and deer presence (@fig-popularity-correlation). It is important to consider that the derived popularity data is relative, contains no temporal component and does not differentiate activity types. Platforms that provide this additional data, can be a valuable and inexpensive source of information. They can be used alongside traditional infrared counters to better examine deer interactions over longer time frames.
+However further investigation involving the previously utilised subset of deer indicated no correlation between path popularity and deer presence (@fig-popularity-correlation). Considering that interactions between deer and paths were previously quantified and observed it is likely that the lack of absolute popularity values, temporal context and differentiation between activity types makes it challenging to explore the relationship between the two variables. Platforms that could provide this additional information could there be a valuable and inexpensive source of insights to better understand if a relationship exists or not. This data should also be integrated alongside traditional infra-red counters for ground truthing.
 
 ```{r}
 #| label: fig-popularity-correlation
@@ -653,9 +654,9 @@ deer_long %>%
   intersect_counter_popularity(strassen_popular, ., buffer=50) %>% ggscatter(., x = "popularity", y = "n", color = "reh", add = "reg.line", add.params = list(color = "red")) + stat_cor(method="pearson", aes(label = paste(..rr.label.., ..p.label.., sep = "~`,`~"))) + labs(x = "Popularity", y = "Number of intersections", color = "Deer") + scale_color_brewer(palette = "Dark2")
 ```
 
-# Conclusion and future research
+# Conclusion
 
-As outdoor recreational activities increase in popularity there is a continued need to better understand what the effects are on nearby wildlife. Derived movement data from three deer over the course of 2014 highlighted that recreational paths influence their movement patterns, resulting in greater avoidance overall and reduced crossing of the paths during the weekends. To determine responses to individual perturbation events a higher sampling rate, combined with accelerometer data is however required. Increased outdoor recreation also presents an opportunity to integrate activity data to better identify potential hotspots that may have a disproportionate influence on deer behaviour. A combination of temporally concurrent GPS-tracked activity data, verified by on the ground counters are required to further examine long-term interactions between deer and recreational activities.
+As outdoor recreational activities increase in popularity there is a continued need to better understand what the effects are on nearby wildlife. Derived movement data from three deer over the course of 2014 did not show differences in aggregated movement between the weekdays and weekends. However when recreational paths were examined, they were found to influence deer movement, resulting in greater avoidance overall and reduced crossing of the paths during the weekends. To determine responses to individual perturbation events a higher sampling rate, combined with accelerometer data is likely required. The observed avoidance also did not correlate with the popularity of the paths that deer interacted with during the study. Nonetheless, increased outdoor recreation and tracking also presents an opportunity to integrate more activity data. If this data is temporally concurrent with deer tracking, enriched with activity type and verified by stationary counters it is likely to be an invaluable tool to examine long-term interactions between deer and human recreation.
 
 ```{r,  eval = FALSE}
 ## OLD CODE:
@@ -692,8 +693,6 @@ deer_short %>%
 
 deer_short %>% 
   ggplot(data = ., aes(x=datetime_utc, y=steplength, color = reh)) + geom_line() + geom_point() + facet_grid(wdays~reh) 
-
-
 
 
 # deer_long %>%
